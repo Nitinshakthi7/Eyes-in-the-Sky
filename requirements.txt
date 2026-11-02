@@ -1,0 +1,12 @@
+# Install PyTorch FIRST with the command in README, Setup step 4 (torch and torchvision are not listed here).
+# Pinned from a clean Python 3.12 venv on 2026-11-02 (pip freeze), so everyone gets identical versions.
+numpy==2.5.4
+pandas==3.1.0
+matplotlib==3.11.2
+scikit-learn==1.9.1
+pillow==13.0.0
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.33
+notebook==7.6.4
+ipykernel==7.4.0
