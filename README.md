@@ -124,6 +124,8 @@ TODO (filled in when the experiments are done; everything comes from `results/me
 
 ## Team workflow (relay)
 
+**Our full step-by-step plan with one task card per person: [docs/plan.md](docs/plan.md).** Your own daily log and line-by-line code notes: `docs/log/<yourname>.md` (the file already exists; fill it in every day you work).
+
 We work like a relay race: each person pulls the previous person's work, reads it, adds their part and pushes. The person who handed over the baton reviews and merges the pull request. Nobody merges their own work.
 
 **Lap 1 (Mon-Tue): a small version that works from start to end**
