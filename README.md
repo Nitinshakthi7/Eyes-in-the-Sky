@@ -153,7 +153,7 @@ We work like a relay race: each person pulls the previous person's work, reads i
 
 | Member | GitHub username | Part | Key files |
 |---|---|---|---|
-| Shrivalli | | A - Data + EDA + fixed split | `src/dataset.py`, `notebooks/01_eda.ipynb`, `data/splits.csv` |
+| Srivalli | | A - Data + EDA + fixed split | `src/dataset.py`, `notebooks/01_eda.ipynb`, `data/splits.csv` |
 | Tejash | | B - Scratch CNN + ablations | `src/models.py` (scratch CNN), `notebooks/02_baseline_cnn.ipynb` |
 | Rachana | | C - Transfer learning (ResNet-18, MobileNetV2) | `src/models.py` (transfer models), `notebooks/03_transfer_learning.ipynb` |
 | Nitin (team leader) | | D - Shared `train()` + data-efficiency study + repo | `src/train.py`, `src/utils.py`, `notebooks/05_data_efficiency.ipynb`, `check_setup.py`, `results/metrics.csv` |
