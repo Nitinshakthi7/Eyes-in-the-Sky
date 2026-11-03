@@ -20,9 +20,7 @@ One row per work session. "How" means the steps you really took, not what you pl
 
 | Date | What I did | How I did it | Commit / PR link | Stuck on / help needed |
 |---|---|---|---|---|
-| 2026-11-0_ | | | | |
-
-*Example of a good row (delete this line):* 2026-11-03 | Wrote the scratch CNN | Built 3 blocks of Conv, BatchNorm, ReLU, MaxPool; checked the output shape with a random tensor; trained 3 epochs | PR #4 | Validation accuracy stays at 10%, checking the learning rate
+| 2026-11-02 | Prepared laptop and environment for transfer-learning task: installed and verified Python, Git, PyTorch, torchvision and project dependencies; verified PyTorch detects NVIDIA RTX 4050 GPU via CUDA; downloaded and verified EuroSAT dataset, ResNet-18 weights and MobileNetV2 weights. | Guided by ChatGPT for setup commands, which I copied, pasted and ran in the terminal myself, sharing outputs for validation. Ran `python check_setup.py --name Rachana --download`. Configured Git global identity, created branch `setup/rachana`, regenerated setup report and staged it using Antigravity. | (pending PR) | Still learning Git and its commands. Understand that CUDA allows PyTorch to use GPU to accelerate training, but not yet completely clear on why CUDA is specifically needed and how it works internally. |
 
 ## 2. Code notes (line by line)
 
@@ -44,23 +42,25 @@ For every function or block you write, copy the code here and explain it. Add a 
 
 For each concept: (a) what it is in one sentence, (b) where it is in our code, (c) one question a teacher could ask, and my answer.
 
-### Concept: ...
+### Concept: CUDA GPU Acceleration in PyTorch
 
-- What it is:
-- Where in our code:
-- Likely question and my answer:
+- What it is: CUDA is NVIDIA's platform that allows PyTorch to run tensor computations on the NVIDIA GPU rather than the CPU, accelerating model training.
+- Where in our code: Verified during setup in `check_setup.py` (via `torch.cuda.is_available()`).
+- Likely question and my answer: Why do we use CUDA/GPU instead of CPU for training CNNs? Answer: GPUs have thousands of parallel cores suited for matrix operations in deep learning, significantly reducing training time per epoch. (Note: I am still learning why CUDA is specifically needed and how it works internally).
 
 ## 4. What I understood from the previous part
 
 Write this BEFORE you start your baton (3 lines is enough). It must be about the part you pulled, not your own.
 
--
+- (Pending: to be written before starting Baton 4 after Baton 3)
 
 ## 5. Sources I used
 
 Papers, documentation pages, videos, and AI chats (say which tool and what it helped with). Nitin uses this for the report's references and for the AI-usage paragraph.
 
--
+- ChatGPT: Provided terminal commands for installation, configuration and verification; helped troubleshoot setup.
+- Antigravity (Gemini 3.8 Flash): Assisted with Git global identity configuration, creating branch `setup/rachana`, regenerating and inspecting setup report, and checking daily log and AI disclosure requirements.
+- Project repository: Setup instructions in `README.md` and `docs/plan.md`.
 
 ## 6. My 6 viva questions
 
