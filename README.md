@@ -20,7 +20,7 @@ Team rules:
 - All results go in `results/metrics.csv` (columns: `model,fraction,seed,accuracy,macro_f1`).
 - Every file has an owner who can explain every line of it.
 
-Project state: this is the empty skeleton. Only `check_setup.py` is real code today.
+Project state: the Part A data split and EDA are in the repository. Tejash's Part B scratch CNN baseline and two ablations are complete. See the Part B results below. Other project parts are tracked in the plan and may still be in progress.
 
 ## Setup (Windows)
 
@@ -100,18 +100,26 @@ Use PowerShell. Do the steps in order.
 
 ## How to run
 
-Right now only the setup check works (run it inside the activated venv, from the repo root):
+Run the setup check inside the activated virtual environment, from the repo root:
 
 ```
 python check_setup.py --name YourName
 ```
 
-The other steps are filled in as each part is finished (TODO):
+To open Tejash's Part B training notebook after setup and data download:
+
+```
+jupyter notebook notebooks/02_baseline_cnn.ipynb
+```
+
+Run the notebook cells from top to bottom. It trains the baseline and the no-BatchNorm and two-block ablations with seeds 0, 1, and 2. Results are saved in `results/metrics.csv` and the figures in `results/figures/`. The notebook currently uses its own small training helper because the shared `src/train.py` function is still a TODO.
+
+Project steps:
 
 | Step | Who | How to run |
 |---|---|---|
-| Split the data (fixed 70/15/15) and EDA | A | TODO (`notebooks/01_eda.ipynb`, `src/dataset.py`) |
-| Scratch CNN and ablations | B | TODO (`notebooks/02_baseline_cnn.ipynb`) |
+| Split the data (fixed 70/15/15) and EDA | A | Complete (`notebooks/01_eda.ipynb`, `src/dataset.py`) |
+| Scratch CNN and ablations | B | Complete (`notebooks/02_baseline_cnn.ipynb`) |
 | Transfer learning | C | TODO (`notebooks/03_transfer_learning.ipynb`) |
 | Train one model: `train(model_name, fraction, seed)` | D | TODO (`src/train.py`) |
 | Data-efficiency study | D | TODO (`notebooks/05_data_efficiency.ipynb`) |
@@ -120,7 +128,15 @@ The other steps are filled in as each part is finished (TODO):
 
 ## Results
 
-TODO (filled in when the experiments are done; everything comes from `results/metrics.csv` and `results/figures/`).
+Part B test results (mean ± sample standard deviation over seeds 0, 1, and 2):
+
+| Model | Test accuracy | Test macro-F1 |
+|---|---:|---:|
+| Scratch CNN baseline | 92.72% ± 0.45% | 92.48% ± 0.51% |
+| No BatchNorm | 88.95% ± 0.63% | 88.45% ± 0.64% |
+| Two convolution blocks | 85.31% ± 1.43% | 84.18% ± 1.78% |
+
+The [Part B report draft](report/part_b_scratch_cnn_draft.md) describes the method and discusses these results. Learning curves and the ablation comparison are in `results/figures/`.
 
 ## Team workflow (relay)
 
