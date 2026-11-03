@@ -18,7 +18,19 @@ Every member must be able to explain the whole pipeline, not only their own part
    Answer: We used right-angle rotations and horizontal and vertical flips to create varied training examples. These are suitable for satellite images because there is no fixed "up" direction. Validation and test images were left unchanged.
 
 ## Part B - Scratch CNN and ablations (Tejash)
-6 likely viva questions + short answers - TODO
+
+1. Question: Why does the scratch CNN use three convolution blocks with more filters in each block?
+   Answer: Tejash to write after practicing.
+2. Question: What does BatchNorm do, and how did you test its effect?
+   Answer: Tejash to write after practicing.
+3. Question: Why use ReLU after each convolution?
+   Answer: Tejash to write after practicing.
+4. Question: What does MaxPool do in each block?
+   Answer: Tejash to write after practicing.
+5. Question: Why use global average pooling before the final linear layer?
+   Answer: Tejash to write after practicing.
+6. Question: How can you tell whether the CNN is overfitting from its learning curves?
+   Answer: Tejash to write after practicing.
 
 ## Part C - Transfer learning (Rachana)
 6 likely viva questions + short answers - TODO
