@@ -2,7 +2,7 @@
 
 Every member must be able to explain the whole pipeline, not only their own part.
 
-## Part A - Data and EDA (Shrivalli)
+## Part A - Data and EDA (Srivalli)
 6 likely viva questions + short answers - TODO
 
 ## Part B - Scratch CNN and ablations (Tejash)
