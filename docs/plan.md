@@ -30,7 +30,7 @@ The website is an extra. It is not graded by the brief. AI builds it after Gate 
 | Part | What | Owner | Laptop | Baton |
 |---|---|---|---|---|
 | D | Repo, `utils.py`, then `train()` + data-efficiency study + report assembly | Nitin (leader) | GPU (RTX 3050) | 1 and 5 |
-| A | Data, EDA, fixed split, augmentation | Shrivalli | CPU | 2 |
+| A | Data, EDA, fixed split, augmentation | Srivalli | CPU | 2 |
 | B | Scratch CNN + ablations | Tejash | GPU (RTX 3050) | 3 |
 | C | Transfer learning (ResNet-18, MobileNetV2) | Rachana | GPU (RTX 4050) | 4 |
 | E | Evaluation, Grad-CAM, t-SNE | Rohan | CPU | 6 |
@@ -38,7 +38,7 @@ The website is an extra. It is not graded by the brief. AI builds it after Gate 
 **Progress board.** The baton holder ticks their own box when their pull request is merged.
 
 - [ ] Baton 1: Nitin: skeleton pushed, `utils.py`, everyone invited
-- [ ] Baton 2: Shrivalli: `dataset.py`, `data/splits.csv`, notebook 01
+- [ ] Baton 2: Srivalli: `dataset.py`, `data/splits.csv`, notebook 01
 - [ ] Baton 3: Tejash: scratch CNN, first baseline, notebook 02
 - [ ] Baton 4: Rachana: transfer models, first run each, notebook 03
 - [ ] Baton 5: Nitin: `train()`, first data-efficiency runs
@@ -67,7 +67,7 @@ Times for each baton are guesses (about 3 hours each). If a baton is more than 1
 - Normalise with the ImageNet mean/std for ALL models: mean (0.485, 0.456, 0.406), std (0.229, 0.224, 0.225).
 - Batch size 64, optimiser Adam, loss CrossEntropy, up to 20 epochs, keep the epoch with the best validation accuracy.
 - Augmentation (training images only): rotations by 90, 180, 270 degrees and horizontal and vertical flips. These do not change the label of a satellite image.
-- Seeds: 0, 1, 2 for every 3-seed experiment. Seeds 3 and 4 are extra seeds for the small data-efficiency sizes (Shrivalli = 3, Rohan = 4, scratch CNN on CPU).
+- Seeds: 0, 1, 2 for every 3-seed experiment. Seeds 3 and 4 are extra seeds for the small data-efficiency sizes (Srivalli = 3, Rohan = 4, scratch CNN on CPU).
 - Decisions are made on the validation set. The test set is scored once per finished run and never used to choose anything.
 - Results go in `results/metrics.csv` (model, fraction, seed, accuracy, macro_f1). If git shows a conflict in this file, keep BOTH sides' rows (each row is separate); the header line must appear only once.
 - Never commit the dataset or weights (`.gitignore` blocks them).
@@ -81,7 +81,7 @@ Times for each baton are guesses (about 3 hours each). If a baton is more than 1
 **Baton 1: repo and helpers (Monday, first)**
 
 1. Push the skeleton (commit `e988f2b` and the plan commit) and open the pull request. Merge it yourself, since nobody can review yet.
-2. Add Shrivalli, Tejash, Rachana and Rohan as collaborators (GitHub: Settings, Collaborators). Add their GitHub usernames to the README contribution table when you have them.
+2. Add Srivalli, Tejash, Rachana and Rohan as collaborators (GitHub: Settings, Collaborators). Add their GitHub usernames to the README contribution table when you have them.
 3. Write `src/utils.py`: `set_seed(seed)` (python, numpy, torch), `get_device()` (GPU if available, else CPU), and the folder paths (repo, data, models, results).
 4. Post the team message and make sure everyone has run `check_setup.py`.
 
@@ -91,7 +91,7 @@ Times for each baton are guesses (about 3 hours each). If a baton is more than 1
 2. Write `src/train.py`: `train(model_name, fraction, seed)`. It builds the model by name (scratch CNN, resnet18 frozen/full, mobilenet_v2 frozen/full), gets the loaders (`fraction` = share of the training set, taken stratified; validation and test never shrink), trains with the team settings, keeps the best-validation epoch (saved in `models/`, git-ignored), scores accuracy and macro-F1 on the test set once, and appends ONE row to `results/metrics.csv`.
 3. Measure the real seconds per epoch for the scratch CNN and ResNet-18 on real data and tell the team. If ResNet-18 takes more than about 40 s per epoch, cut to 15 epochs for everyone.
 4. Notebook 05: the study loop over fractions 0.05, 0.1, 0.25, 0.5, 1.0 for the scratch CNN and the best transfer model (ResNet-18 full fine-tune, unless validation says otherwise). First pass: seed 0 only.
-5. **Lap 2:** run the full sweep (seeds 0, 1, 2), collect Shrivalli's and Rohan's seeds 3 and 4, plot accuracy against the number of labelled images (log x-axis, mean +- std error bars, one line per model), upload the final weights as a GitHub Release (not a commit) on Wednesday night.
+5. **Lap 2:** run the full sweep (seeds 0, 1, 2), collect Srivalli's and Rohan's seeds 3 and 4, plot accuracy against the number of labelled images (log x-axis, mean +- std error bars, one line per model), upload the final weights as a GitHub Release (not a commit) on Wednesday night.
 6. **Lap 2 and Thursday:** README results, report assembly (section 8), the fresh-clone test (clone into a new folder, follow only the README, make sure it runs), make the repo public.
 
 **Done when:** `train()` runs for any model name and writes a correct row; the data-efficiency plot is in `results/figures/`.
@@ -99,12 +99,12 @@ Times for each baton are guesses (about 3 hours each). If a baton is more than 1
 
 ---
 
-### Baton 2: Part A, Shrivalli (CPU laptop)
+### Baton 2: Part A, Srivalli (CPU laptop)
 
 **Goal:** one fixed split that everybody uses, and an understanding of the data.
 **You pull from:** Nitin's skeleton and `utils.py`.
 
-1. Run `python check_setup.py --name Shrivalli --download` if you have not already. Look inside `data/eurosat/2750`: one folder per class.
+1. Run `python check_setup.py --name Srivalli --download` if you have not already. Look inside `data/eurosat/2750`: one folder per class.
 2. In `src/dataset.py`, write `load_eurosat(root)`. The EuroSAT object keeps a list of (file path, label) pairs in `.samples` and the class names in `.classes`.
 3. Write `make_split(seed=42)`: use scikit-learn `train_test_split` with `stratify=` twice: first 70% train and 30% rest, then split the rest 50/50 into validation and test. Save `data/splits.csv` with columns path, label, class_name, split. **Commit this file** (the only data file allowed in git).
 4. Prove no leakage: print the number of images per class in each split and check that no file appears in two splits. Put this check at the top of notebook 01. The expected sizes are 18,900 / 4,050 / 4,050.
@@ -121,7 +121,7 @@ Times for each baton are guesses (about 3 hours each). If a baton is more than 1
 ### Baton 3: Part B, Tejash (GPU laptop, RTX 3050)
 
 **Goal:** our own CNN, at least two ablations, results with 3 seeds.
-**You pull from:** Shrivalli's data code.
+**You pull from:** Srivalli's data code.
 
 1. Read `dataset.py` and notebook 01. Write 3 lines on what you understood.
 2. In `src/models.py`, write `build_scratch_cnn(...)`: 3 blocks of Conv, BatchNorm, ReLU, MaxPool with 32, 64 and 128 filters, then global average pooling, then a Linear layer to 10 outputs. Add switches (use_batchnorm, depth, dropout) so the ablations change ONE thing at a time. The baseline must stay as described.
@@ -311,7 +311,7 @@ I am an AI and can make mistakes. Everything marked NOT RUN was not run by me. T
 | Section | Writer |
 |---|---|
 | Title page (leader marked), abstract (150 to 200 words), data-efficiency results, conclusion, contribution table and repo link on page 1, AI-usage paragraph, final assembly | Nitin |
-| Dataset; limitations, ethics, future work | Shrivalli |
+| Dataset; limitations, ethics, future work | Srivalli |
 | Methodology; scratch CNN results and ablations | Tejash |
 | Introduction; related work; transfer results | Rachana |
 | Error analysis and explainability | Rohan |

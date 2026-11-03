@@ -29,7 +29,7 @@ One row per work session. "How" means the steps you really took, not what you pl
 
 ### File: `src/utils.py` / Function: all of it (imports, paths, `set_seed`, `get_device`, self-check)
 
-Why this file exists: three things are needed by every part (Shrivalli's data code, Tejash's and Rachana's training, my `train()`, Rohan's evaluation): the same random seed method, the same way to pick GPU or CPU, and the same folder names. If everyone writes their own, results stop being comparable.
+Why this file exists: three things are needed by every part (Srivalli's data code, Tejash's and Rachana's training, my `train()`, Rohan's evaluation): the same random seed method, the same way to pick GPU or CPU, and the same folder names. If everyone writes their own, results stop being comparable.
 
 **Imports and paths (lines 14 to 29)**
 
@@ -41,7 +41,7 @@ Why this file exists: three things are needed by every part (Shrivalli's data co
 | 18 | `import torch` loads PyTorch | PyTorch | It is our deep-learning library. The seed and the GPU check both come from it |
 | 23 | `ROOT = Path(__file__).resolve().parent.parent` finds the repo folder. `__file__` is the address of this file. `.resolve()` makes it a full address. Each `.parent` goes up one folder: `src/utils.py` to `src` to the repo folder | Path relative to the file | It works on any laptop and in any folder. If we typed `C:\Users\Nitinshakthi\...` it would only work on mine |
 | 24 to 27 | `DATA_DIR`, `MODELS_DIR`, `RESULTS_DIR`, `FIGURES_DIR` are the four folders we use. `ROOT / "data"` means "the data folder inside the repo" | Constants (names that never change) | One place to fix a folder name, and nobody types a path by hand. Our folder name has spaces, which breaks hand-typed paths easily |
-| 28 | `SPLITS_CSV` is the file with the fixed 70/15/15 split | Constant | Shrivalli writes this file in baton 2; everyone reads it from here |
+| 28 | `SPLITS_CSV` is the file with the fixed 70/15/15 split | Constant | Srivalli writes this file in baton 2; everyone reads it from here |
 | 29 | `METRICS_CSV` is the results table | Constant | `train()` will add one row per run to this file. The brief requires all results in `results/metrics.csv` |
 
 **`set_seed` (lines 32 to 39)**
@@ -62,7 +62,7 @@ Why this file exists: three things are needed by every part (Shrivalli's data co
 | Line(s) | What it does (simple words) | Concept | Why we used it (and what else we could have used) |
 |---|---|---|---|
 | 42 to 43 | A function and its docstring | Function | Every part calls `get_device()` instead of deciding by itself |
-| 44 | `torch.cuda.is_available()` asks "can PyTorch use an NVIDIA GPU?". If yes the function returns `"cuda"` (the GPU), otherwise `"cpu"` | GPU vs CPU, device | Later we write `model.to(device)` and `images.to(device)`. The same code then runs on a GPU laptop and on a CPU laptop (Shrivalli's and Rohan's) without changes |
+| 44 | `torch.cuda.is_available()` asks "can PyTorch use an NVIDIA GPU?". If yes the function returns `"cuda"` (the GPU), otherwise `"cpu"` | GPU vs CPU, device | Later we write `model.to(device)` and `images.to(device)`. The same code then runs on a GPU laptop and on a CPU laptop (Srivalli's and Rohan's) without changes |
 
 **Self-check (lines 47 to 61)**
 

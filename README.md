@@ -131,7 +131,7 @@ We work like a relay race: each person pulls the previous person's work, reads i
 **Lap 1 (Mon-Tue): a small version that works from start to end**
 
 1. Nitin (D): skeleton, `utils.py`, invites everyone
-2. Shrivalli (A): `dataset.py`, fixed split `data/splits.csv`, EDA notebook
+2. Srivalli (A): `dataset.py`, fixed split `data/splits.csv`, EDA notebook
 3. Tejash (B): scratch CNN and a first baseline
 4. Rachana (C): ResNet-18 and MobileNetV2, one first run each
 5. Nitin (D): `train(model_name, fraction, seed)` and the first data-efficiency runs
