@@ -22,7 +22,7 @@ One row per work session. "How" means the steps you really took, not what you pl
 
 | Date | What I did | How I did it | Commit / PR link | Stuck on / help needed |
 |03-11-2026| 
-| 2026-11-03 | [written by the AI] Part A, baton 2: set up the laptop, made the fixed split, wrote the data code, ran the EDA notebook, drafted my two report sections | Claude Code did these steps after I gave it the plan and asked it to do my part. Python 3.13 venv with CPU PyTorch; check_setup.py --download; python -m src.dataset; notebook run from a fresh kernel with nbconvert. What I changed from the AI's work: NOT CHECKED YET | (TODO) | NOT CHECKED YET |
+| 2026-11-03 | [written by the AI] Part A, baton 2: set up the laptop, made the fixed split, wrote the data code, ran the EDA notebook, drafted my two report sections | Claude Code did these steps after I gave it the plan and asked it to do my part. Python 3.13 venv with CPU PyTorch; check_setup.py --download; python -m src.dataset; notebook run from a fresh kernel with nbconvert. What I changed from the AI's work: nothing | 2b2600b | the comments made me understand everythign |
 
 ```
 === AI SESSION REPORT ===
@@ -32,10 +32,13 @@ AI tool and model: Claude Code, Claude Opus 5.5
 Topic: Doing the whole of Part A from the task card
 What the student asked, in order:
   1. "give the guide files can you do comple shrivalli's part of work as instructed in the files"
+  Later in the same chat: add my answers, rename Shrivalli to Srivalli in the repo, commit, push,
+  then add my report answers and viva answers and fix their grammar.
+What the student ran or checked (word for word): i ran the notebook (reset the kernels and ran it) there were no leakages and content check was ok. the dataset was clearly analysed from its's classes (with smaple images of each class), data augmentation is also done, and many parameters were analysed too include color and other things.
 What the AI wrote: src/dataset.py, notebooks/01_eda.ipynb, report/part_a_dataset_and_limitations.md,
   the PR draft, these log entries. It also generated data/splits.csv and results/figures/eda_*.png,
   and check_setup.py rewrote docs/setup/srivalli.md.
-What the student wrote or changed: NOT CHECKED YET
+What the student wrote or changed: nothing
 NOT RUN (the AI did not actually run these):
   - Seed 3 runs (scratch CNN at 5%, 10%, 25%): train() and build_scratch_cnn do not exist yet.
   - get_loader inside a real training loop (only single batches were loaded, including one with num_workers=2).
@@ -46,7 +49,10 @@ NOT RUN (the AI did not actually run these):
 
 The AI really ran: the setup check, the split (twice, same file both times), the leakage check, its own tests of the loader and of augment(), and the whole notebook (no errors).
 
+Update, 2026-11-03: after the list above was written, the AI committed `2b2600b` and pushed it to `a-data-split-srivalli`, because Srivalli asked. It did not open a pull request. Srivalli reports running the notebook with a kernel restart in Jupyter.
+
 I am an AI and can make mistakes. Everything marked NOT RUN was not run by me. The student must read and understand every line before submitting it.
+
 
 *Example of a good row (delete this line):* 2026-11-03 | Wrote the scratch CNN | Built 3 blocks of Conv, BatchNorm, ReLU, MaxPool; checked the output shape with a random tensor; trained 3 epochs | PR #4 | Validation accuracy stays at 10%, checking the learning rate
 
@@ -171,7 +177,7 @@ For each concept: (a) what it is in one sentence, (b) where it is in our code, (
 
 Write this BEFORE you start your baton (3 lines is enough). It must be about the part you pulled, not your own.
 
-- [written by the AI] TODO Srivalli: please write this yourself after reading `src/utils.py`. The AI left it empty because it must be your own understanding.
+- Nitin set up the file structure and implemented the seed function.
 
 ## 5. Sources I used
 
@@ -184,10 +190,28 @@ Papers, documentation pages, videos, and AI chats (say which tool and what it he
 - EuroSAT repository, licence statement: https://github.com/phelber/EuroSAT
 - Function behaviour of scikit-learn, torchvision and pandas: from the AI's own knowledge, then tested by running the code. No specific documentation page was opened.
 - AI chat: Claude Code (Claude Opus 5.5), see the AI SESSION REPORT in section 1.
+- [written by Claude Code] AI chat: the viva answers in section 6 came from Copilot (Srivalli confirmed; see the note there). Copilot session report: TODO Srivalli.
 
 ## 6. My 6 viva questions
 
 Six questions a teacher could ask about my part, each with a short answer. At the end, copy them into [docs/viva.md](../viva.md).
+
+1. Question: What dataset did you use for the EDA?
+   Answer: We used EuroSAT: 27,000 RGB satellite images, each 64x64 pixels, grouped into 10 land-use classes.
+2. Question: How did you divide the images for training and testing?
+   Answer: We used a fixed, stratified split: 70% for training, 15% for validation and 15% for testing. Stratification keeps each class represented in similar proportions.
+3. Question: How did you check that the data split had no leakage?
+   Answer: We checked that no image appeared in more than one split, and we compared file fingerprints to catch identical images saved under different names.
+4. Question: What did you learn about the class distribution?
+   Answer: The classes are mildly imbalanced. The largest classes have 3,000 images, while Pasture has 2,000, so we also consider macro-F1, which gives each class equal weight.
+5. Question: What did the sample images and colour analysis show?
+   Answer: Some classes look different in colour, but others are similar. The samples also show that one patch can contain several land types, which can make its single label imperfect.
+6. Question: Why did you augment training images, and which transforms did you use?
+   Answer: We used right-angle rotations and horizontal and vertical flips to create varied training examples. These are suitable for satellite images because there is no fixed "up" direction. Validation and test images were left unchanged.
+
+[written by Claude Code] Srivalli pasted the six questions and answers above. Srivalli confirmed they came from Copilot, so they are AI-written. Claude Code only fixed grammar and format. Copilot session report: TODO Srivalli.
+
+### Extra practice questions (from the task card and Claude Code)
 
 [written by the AI] The plan does not let the AI write viva answers, so the questions are here and the answers are yours to write.
 
