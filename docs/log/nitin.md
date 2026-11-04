@@ -23,6 +23,7 @@ One row per work session. "How" means the steps you really took, not what you pl
 | 2026-11-02 | Set up the repo: skeleton, `check_setup.py`, team plan, member logs. Merged PR 1. | With Claude Code. Ran `check_setup.py` on my laptop (all checks OK, RTX 3050). Tested the PyTorch install in a clean venv. Made 2 commits, pushed, opened and merged the pull request. | [PR 1](https://github.com/Nitinshakthi7/Eyes-in-the-Sky/pull/1) | Teammates not added as collaborators yet |
 | 2026-11-02 | Baton 1: wrote `src/utils.py` (seed, device, paths) | With Claude Code. Wrote 3 small helpers, then a self-check at the bottom of the file. Ran `python -m src.utils`: passed. Wrote the notes below. | (PR for this branch: TODO) | I still have to read every line below and mark what I do not understand yet |
 | 2026-11-03 | Baton 5: wrote `src/train.py` (the shared `train()`), earlier than planned because Tejash had already finished | With Claude Code. Read Tejash's pushed branch first and checked his settings against the team settings. Wrote `train()` from his helper, plus a `fraction` option, all images kept in memory, and a results file that replaces a repeated run's row. Tested it on the real data: every check passed, and it reproduced his baseline (mean of 3 seeds 92.79% against his 92.72%) at 4.6 s per epoch. Wrote the notes below. | (branch `d-train-nitin`, not pushed yet) | Nitin's answers: understands it all ("I understand it all"), no changes to the AI's work. He first said "None of these yet", then ran `python -m src.train` himself and it passed; asked to read the code and the notes, he then said: "I have read and understood" (2026-11-03) |
+| 2026-11-04 | Wrote and ran the data-efficiency study (`notebooks/05_data_efficiency.ipynb`): scratch CNN against MobileNetV2 (fully fine-tuned) at 5%, 10%, 25%, 50% and 100% of the training images, seeds 0 to 2 | With Claude Code. Built the notebook around `train()`. It reuses the 100% rows that already exist and skips finished runs. Ran the 24 missing runs on my RTX 3050 in 20 minutes with the team settings. Checked that `results/metrics.csv` only gained rows (21 old rows unchanged, no duplicates) and saved the plot `results/figures/data_efficiency.png`. Wrote the notes below and the open-items list (section 7) | (branch `d-data-efficiency-nitin`, not pushed yet) | Nitin's own check of this notebook: NOT CHECKED YET. Seeds 3 and 4 (Srivalli, Rohan) are still missing |
 
 ## 2. Code notes (line by line)
 
@@ -152,6 +153,22 @@ Why this file exists: the brief wants ONE reusable training function, so every e
 
 **How it was tested (2026-11-03):** the self-check passed. A longer test script (kept outside the repo) also passed. It showed that the in-memory pixels equal Srivalli's loader's pixels, that every augmented image is one of the 8 turns or flips of the original, that the 5% subset is exactly the one her `get_loader` picks, and that the train, validation and test rows do not overlap. Full 20-epoch runs reproduced Tejash's results: baseline mean over seeds 0 to 2 was 92.79% (his 92.72%), and the order baseline, no BatchNorm, two blocks came out the same. Speed: about 4.6 s per epoch on my RTX 3050, against 45 to 90 s on his laptop.
 
+### File: `notebooks/05_data_efficiency.ipynb` / all of it (settings, sweep, table, plot, gap)
+
+Why this notebook exists: the brief asks for a data-efficiency study with plots and several seeds at small data sizes. It compares our scratch CNN with the best transfer model on validation (MobileNetV2, fully fine-tuned). Everything is trained through the shared `train()`, so the numbers are comparable with Parts B and C.
+
+| Cell | What it does (simple words) | Concept | Why we used it (and what else we could have used) |
+|---|---|---|---|
+| 1 (setup) | Finds the repo folder, then imports `train`, the results path and the device | Imports | The same start-up trick as the other notebooks, so it works from the repo folder or from `notebooks/` |
+| 2 (settings) | `MODELS_TO_COMPARE`, `FRACTIONS` (5%, 10%, 25%, 50%, 100%), `SEEDS` (0, 1, 2), `TRAIN_SIZE` (18,900), `SIZES` (945 to 18,900) | Constants | One place to change the study. The sizes are turned into numbers of images for the plot's x-axis |
+| 4 (sweep) | `already_done` checks whether `metrics.csv` already has a row for a (model, fraction, seed). The loop goes through every seed, model and size, skips finished ones and otherwise calls `train(...)`. The per-epoch printing is hidden and one summary line per run is shown | Resumable loop, `redirect_stdout` | A stopped notebook can be started again. The 100% rows from Parts B and C are reused instead of being trained again (the plan says the 100% points reuse the baseline runs). Looping seed by seed keeps the results balanced if it stops early |
+| 6 (table) | Reads `metrics.csv`, turns each fraction into a number of images and groups the rows by model and size. For each group it computes the number of seeds, the mean and the sample standard deviation (`ddof=1`) of accuracy and macro-F1 | Mean and sample SD | The brief asks for several seeds, not one lucky run. `ddof=1` is the correct SD for a small sample of seeds. With a single seed the SD cannot be computed, so it shows as 0 |
+| 8 (plot) | Draws test accuracy and macro-F1 against the number of labelled images, one line per model, with error bars. The x-axis is logarithmic. Saves the figure to `results/figures/data_efficiency.png` | Log axis, error bars | The training sizes grow by about 2 to 2.5 times each step, so a log axis spaces them evenly. The error bars show how much the seeds disagree |
+| 10 (gap) | Subtracts the scratch CNN's mean accuracy from MobileNetV2's at each size | Gap | Shows directly how much transfer learning helps at each amount of data |
+| 11 (text) | The interpretation: transfer learning helps most when labels are scarce (93.69% with 945 images against 92.72% for the scratch CNN with all 18,900), the gap shrinks from 16.6 to 5.6 points, and the limits of the study | Interpretation | Written from the real numbers, including what the study cannot say (same epoch budget for all sizes, only 3 seeds, random split) |
+
+**Result (2026-11-04, my RTX 3050):** 24 runs in 20 minutes. Test accuracy, mean ± sample SD over seeds 0 to 2: scratch CNN 77.07 ± 0.74 (5%), 80.98 ± 1.20 (10%), 84.96 ± 1.86 (25%), 89.45 ± 1.20 (50%), 92.72 ± 0.45 (100%). MobileNetV2 full: 93.69 ± 0.20, 96.15 ± 0.33, 97.26 ± 0.09, 97.76 ± 0.01, 98.27 ± 0.12.
+
 ## 3. Concepts I learned
 
 ### Concept: random seed (reproducibility)
@@ -202,6 +219,24 @@ Why this file exists: the brief wants ONE reusable training function, so every e
 - Where in our code: line 213.
 - Likely question and my answer: *Why macro-F1 as well as accuracy?* The classes have different sizes. Accuracy can look good while a small class does badly. Macro-F1 does not hide that.
 
+### Concept: data efficiency (learning with fewer labels)
+
+- What it is: how the score changes as we give the model fewer labelled training images. A model that is "data efficient" stays good with little data.
+- Where in our code: notebook 05, the sweep (cell 4) and the plot (cell 8).
+- Likely question and my answer: *Why does MobileNetV2 do so well with only 945 images?* It was already trained on a million ImageNet images, so it already knows edges, textures and shapes. Fine-tuning only has to adapt that knowledge to satellite images. The scratch CNN has to learn everything from the 945 images.
+
+### Concept: mean ± sample standard deviation over seeds
+
+- What it is: we repeat each setting with different seeds and report the average and how much the runs disagree. The sample standard deviation (`ddof=1`) divides by one less than the number of runs, which is the right choice for a small sample.
+- Where in our code: notebook 05, cell 6 (the table); also in `train()`'s reuse for all parts.
+- Likely question and my answer: *Why not just one run?* One run can be lucky or unlucky. With 3 seeds we can see whether a difference is bigger than the random spread. Here the smallest gap is 5.6 points and the largest SD is 1.9, so the gap is real.
+
+### Concept: logarithmic axis
+
+- What it is: an axis where equal steps mean equal *ratios*, not equal differences.
+- Where in our code: notebook 05, cell 8.
+- Likely question and my answer: *Why a log x-axis?* The training sizes roughly double each step (945, 1,890, 4,725, 9,450, 18,900). On a normal axis the small sizes would be squeezed together. On a log axis they are evenly spaced and easy to compare.
+
 ## 4. What I understood from the previous part
 
 Baton 1 starts the relay, so there is no previous part to read.
@@ -247,3 +282,39 @@ Questions about `train()` (baton 5):
     Answer: It is scored once at the end, after the best epoch was chosen on validation. Nothing is decided from it.
 11. Question: Why macro-F1 as well as accuracy?
     Answer: The classes have different sizes. Macro-F1 gives each class the same weight, so a weak small class cannot hide behind a good accuracy.
+
+Questions about the data-efficiency study:
+
+12. Question: What does the data-efficiency study show?
+    Answer: Transfer learning helps most when labels are scarce. With 945 labelled images (5%) MobileNetV2 reaches 93.69%, about one point better than the scratch CNN with all 18,900 images (92.72%). The gap shrinks from 16.6 points at 5% to 5.6 points at 100% but does not close.
+13. Question: Why compare against MobileNetV2 and not ResNet-18?
+    Answer: It was the best transfer model on the validation set (98.22% against 97.69%), and the test numbers agree. We chose on validation, not on test.
+14. Question: What are the limits of this study?
+    Answer: All sizes get the same budget of up to 20 epochs, so small sets get fewer weight updates and may be under-trained. MobileNetV2 was chosen on the full data and not tuned per size. It uses only 3 seeds (seeds 3 and 4 are still missing), and the random split may let neighbouring patches into train and test.
+
+## 7. Open items (not done yet)
+
+Kept up to date by Nitin and the AI. Last updated: 2026-11-04 (Wednesday), after the data-efficiency sweep finished. Gate 2 (results frozen) is Wednesday 21:00, Gate 3 (offline dry run) is Thursday 17:00, the demo is Friday.
+
+| # | Who | What is not done yet | Status |
+|---|---|---|---|
+| 1 | Rohan | Setup is installed on his laptop (he told Nitin on 2026-11-04) but his setup report (`docs/setup/rohan.md`) is not on GitHub: no pull request, no branch, no commits, no log entries. His GitHub account `rohans-oss` is already a collaborator. `src/evaluate.py` and `src/gradcam.py` are still empty placeholders. Baton 6 (confusion matrix, Grad-CAM, t-SNE) has not started. Gate 1 is not complete because of this | Open: setup report PR, then the weights, then baton 6 |
+| 2 | Rohan | Seed 4 runs: scratch CNN at 5%, 10%, 25% of the training data, on his CPU laptop | Open (train() exists now) |
+| 3 | Srivalli | Seed 3 runs: scratch CNN at 5%, 10%, 25%, on her CPU laptop | Open (train() exists now) |
+| 4 | Srivalli | AI row for the Copilot viva answers still says `NOT CHECKED YET`. Her PR 5 checklist was merged with "I can explain every line" unticked and the reviewer boxes unticked | Open |
+| 5 | Nitin | The two code questions for Srivalli were never asked: what `make_split` does and why it uses `stratify`; why `get_loader` takes a `fraction` | Open |
+| 6 | Tejash | Rerun the baseline and the two ablations through `train()` with seeds 0, 1, 2 (9 runs, about 90 seconds each on Nitin's laptop). His rows in `results/metrics.csv` come from his own notebook helper and are labelled pilot results | Open |
+| 7 | Tejash | His AI row still says "i have not done anything" in the "what we checked" cell | Open |
+| 8 | Rachana | The scratch CNN has **94,986** parameters, not 93,962. The wrong number is in 7 places: her log (2), her viva answers (1), notebook 03 (2) and her report draft (2) | Open |
+| 9 | Rachana | If the learning curves are shown in the report: 8 of her 12 histories were rebuilt from log files at lower precision. The result rows themselves are exact | Open (report note) |
+| 10 | Everyone | The trained weights are not shared yet. Rachana's 12 checkpoints were verified (they load safely and reproduce her test results) but exist only in her zip. Tejash's scratch-CNN weights are on his laptop. Nitin's `models/` folder is empty. Plan: a GitHub Release (not a commit) | Open |
+| 11 | Nitin | The data-efficiency study (this notebook, `notebooks/05_data_efficiency.ipynb`) was run locally (24 runs, 20 minutes): `results/metrics.csv` gained 24 rows and the plot is in `results/figures/data_efficiency.png`. Not committed or pushed. Seeds 3 and 4 will be added when Srivalli and Rohan run theirs | Done locally, push pending |
+| 12 | Nitin | `docs/ai_usage.md` rows for the team plan and for `src/utils.py` still say "Nitin's own review: TODO" | Open |
+| 13 | Nitin | In section 1 of this log: the `src/utils.py` row still says "(PR for this branch: TODO)" (it was PR 2), and the `train()` row still says "not pushed yet" (it was PR 7) | Open |
+| 14 | Nitin | Section 4 of this log: three statements about Tejash's part are not confirmed yet (3 blocks of Conv, BatchNorm, ReLU, MaxPool; the test set is scored once; the baseline averages about 92.7%) | Open |
+| 15 | Nitin | README: the "How to run" table still says TODO for steps that are done, the Results section is still TODO, and the GitHub usernames in the contribution table are blank (all five are known: Srivalli-DT, TejashRajuKV, rachana26paw, Nitinshakthi7, rohans-oss) | Open |
+| 16 | Nitin | The 7 questions for the teacher (plan, section 9) have not been sent | Open |
+| 17 | Nitin | Report: title page with the contribution table and the repo link on page 1, abstract, data-efficiency results, conclusion, AI-usage paragraph, references, final assembly. Make the repo public and do the fresh-clone test | Open |
+| 18 | AI (after Gate 2) | The offline website in `app/` (FastAPI, one page, one predict function). Needs the weights from item 10 | Not started |
+| 19 | Everyone | Report caveats to mention: BatchNorm statistics still update in the "frozen" models; the frozen and full comparison also differs in learning rate; a random split can put neighbouring patches in train and test | Open (report note) |
+| 20 | Nitin | Housekeeping: `CLAUDE.md` is untracked and not in git; merged branches kept on GitHub: `a-data-split-srivalli`, `c-transfer-rachana`, `d-train-nitin`, `tejash-part-b-complete`; optional branch protection | Optional |
