@@ -5,6 +5,7 @@ Part C: Rachana adds the transfer-learning builders here.
 """
 
 import torch.nn as nn
+from torchvision import models
 
 
 def build_scratch_cnn(
@@ -46,3 +47,32 @@ def build_scratch_cnn(
     layers.append(nn.Linear(input_channels, num_classes))
 
     return nn.Sequential(*layers)
+
+
+def build_transfer_model(name: str, freeze: bool = True):
+    """Build a pretrained ImageNet model adapted for 10 EuroSAT classes.
+
+    name:   'resnet18' or 'mobilenet_v2'
+    freeze: True keeps the backbone fixed so only the new last layer trains;
+            False lets all layers fine-tune.
+    """
+    if name == "resnet18":
+        model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+    elif name == "mobilenet_v2":
+        model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
+    else:
+        raise ValueError(f"Unsupported transfer model {name!r}; expected 'resnet18' or 'mobilenet_v2'")
+
+    if freeze:
+        # Freeze all pretrained weights first.
+        for param in model.parameters():
+            param.requires_grad = False
+
+    # Replace the 1000-class ImageNet head with a new 10-class linear layer.
+    # A new nn.Linear has requires_grad=True by default, so it always learns.
+    if name == "resnet18":
+        model.fc = nn.Linear(model.fc.in_features, 10)
+    elif name == "mobilenet_v2":
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, 10)
+
+    return model
