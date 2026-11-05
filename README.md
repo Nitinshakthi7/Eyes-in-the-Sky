@@ -112,7 +112,7 @@ To open Tejash's Part B training notebook after setup and data download:
 jupyter notebook notebooks/02_baseline_cnn.ipynb
 ```
 
-Run the notebook cells from top to bottom. It trains the baseline and the no-BatchNorm and two-block ablations with seeds 0, 1, and 2. Results are saved in `results/metrics.csv` and the figures in `results/figures/`. The notebook currently uses its own small training helper because the shared `src/train.py` function is still a TODO.
+Run the notebook cells from top to bottom. It trains the baseline and the no-BatchNorm and two-block ablations with seeds 0, 1, and 2. Results are saved in `results/metrics.csv` and the figures in `results/figures/`. This notebook still uses its own small training helper from before the shared `src/train.py` existed.
 
 Project steps:
 
@@ -120,23 +120,41 @@ Project steps:
 |---|---|---|
 | Split the data (fixed 70/15/15) and EDA | A | Complete (`notebooks/01_eda.ipynb`, `src/dataset.py`) |
 | Scratch CNN and ablations | B | Complete (`notebooks/02_baseline_cnn.ipynb`) |
-| Transfer learning | C | TODO (`notebooks/03_transfer_learning.ipynb`) |
-| Train one model: `train(model_name, fraction, seed)` | D | TODO (`src/train.py`) |
-| Data-efficiency study | D | TODO (`notebooks/05_data_efficiency.ipynb`) |
-| Evaluation, Grad-CAM, t-SNE | E | TODO (`notebooks/04_evaluation_and_explainability.ipynb`) |
+| Transfer learning | C | Complete (`notebooks/03_transfer_learning.ipynb`) |
+| Train one model: `train(model_name, fraction, seed)` | D | Complete (`src/train.py`; self-check: `python -m src.train`) |
+| Data-efficiency study | D | Complete (`notebooks/05_data_efficiency.ipynb`) |
+| Evaluation, Grad-CAM, t-SNE | E | Code, figures and notebook done; the written analysis is a draft that Rohan still has to confirm (`notebooks/04_evaluation_and_explainability.ipynb`, `src/evaluate.py`, `src/gradcam.py`, `src/gradcam_sanity_check.py`) |
 | Website (offline) | - | TODO (`app/`) |
 
 ## Results
 
-Part B test results (mean ± sample standard deviation over seeds 0, 1, and 2):
+Test results on the 4,050 test images, trained on all 18,900 training images (mean ± sample standard deviation over seeds 0, 1, and 2). All numbers are in `results/metrics.csv`.
 
 | Model | Test accuracy | Test macro-F1 |
 |---|---:|---:|
-| Scratch CNN baseline | 92.72% ± 0.45% | 92.48% ± 0.51% |
-| No BatchNorm | 88.95% ± 0.63% | 88.45% ± 0.64% |
-| Two convolution blocks | 85.31% ± 1.43% | 84.18% ± 1.78% |
+| Scratch CNN baseline (Part B) | 92.72% ± 0.45% | 92.48% ± 0.51% |
+| Scratch CNN without BatchNorm | 88.95% ± 0.63% | 88.45% ± 0.64% |
+| Scratch CNN with two convolution blocks | 85.31% ± 1.43% | 84.18% ± 1.78% |
+| ResNet-18, frozen backbone (Part C) | 86.85% ± 0.32% | 86.35% ± 0.25% |
+| MobileNetV2, frozen backbone | 87.70% ± 0.29% | 87.27% ± 0.31% |
+| ResNet-18, fully fine-tuned | 97.98% ± 0.14% | 97.91% ± 0.14% |
+| MobileNetV2, fully fine-tuned | 98.27% ± 0.12% | 98.19% ± 0.13% |
 
-The [Part B report draft](report/part_b_scratch_cnn_draft.md) describes the method and discusses these results. Learning curves and the ablation comparison are in `results/figures/`.
+The frozen and fine-tuned runs also differ in learning rate (0.001 against 0.0001), so that comparison mixes two changes.
+
+**Data efficiency (Part D).** Test accuracy when only part of the training images is used (3 seeds):
+
+| Training images | Scratch CNN | MobileNetV2 fine-tuned |
+|---:|---:|---:|
+| 945 (5%) | 77.07% ± 0.74% | 93.69% ± 0.20% |
+| 1,890 (10%) | 80.98% ± 1.20% | 96.15% ± 0.33% |
+| 4,725 (25%) | 84.96% ± 1.86% | 97.26% ± 0.09% |
+| 9,450 (50%) | 89.45% ± 1.20% | 97.76% ± 0.01% |
+| 18,900 (100%) | 92.72% ± 0.45% | 98.27% ± 0.12% |
+
+**Error analysis (Part E, draft).** The best model (MobileNetV2 fine-tuned, seed 0) gets 3,981 of 4,050 test images right. About half of its 69 mistakes are between the crop and vegetation classes. The Grad-CAM heat maps are very coarse (2 x 2 cells), and a control experiment showed they do not pick out a more important part of the image, so we use them only as pictures. Details, the confusion matrix and t-SNE are in `notebooks/04_evaluation_and_explainability.ipynb`, Rohan's `results/part_e_analysis.md` and the [Part E draft](report/part_e_error_analysis_and_explainability_draft.md).
+
+The report drafts so far: [Part A](report/part_a_dataset_and_limitations.md), [Part B](report/part_b_scratch_cnn_draft.md), [Part C](report/part_c_transfer_learning_draft.md), [Part E](report/part_e_error_analysis_and_explainability_draft.md). Learning curves, the ablation comparison and the data-efficiency plot are in `results/figures/`.
 
 ## Team workflow (relay)
 
@@ -169,11 +187,11 @@ We work like a relay race: each person pulls the previous person's work, reads i
 
 | Member | GitHub username | Part | Key files |
 |---|---|---|---|
-| Srivalli | | A - Data + EDA + fixed split | `src/dataset.py`, `notebooks/01_eda.ipynb`, `data/splits.csv` |
-| Tejash | | B - Scratch CNN + ablations | `src/models.py` (scratch CNN), `notebooks/02_baseline_cnn.ipynb` |
-| Rachana | | C - Transfer learning (ResNet-18, MobileNetV2) | `src/models.py` (transfer models), `notebooks/03_transfer_learning.ipynb` |
-| Nitin (team leader) | | D - Shared `train()` + data-efficiency study + repo | `src/train.py`, `src/utils.py`, `notebooks/05_data_efficiency.ipynb`, `check_setup.py`, `results/metrics.csv` |
-| Rohan | | E - Evaluation + Grad-CAM + t-SNE | `src/evaluate.py`, `src/gradcam.py`, `notebooks/04_evaluation_and_explainability.ipynb` |
+| Srivalli | [Srivalli-DT](https://github.com/Srivalli-DT) | A - Data + EDA + fixed split | `src/dataset.py`, `notebooks/01_eda.ipynb`, `data/splits.csv` |
+| Tejash | [TejashRajuKV](https://github.com/TejashRajuKV) | B - Scratch CNN + ablations | `src/models.py` (scratch CNN), `notebooks/02_baseline_cnn.ipynb` |
+| Rachana | [rachana26paw](https://github.com/rachana26paw) | C - Transfer learning (ResNet-18, MobileNetV2) | `src/models.py` (transfer models), `notebooks/03_transfer_learning.ipynb` |
+| Nitin (team leader) | [Nitinshakthi7](https://github.com/Nitinshakthi7) | D - Shared `train()` + data-efficiency study + repo | `src/train.py`, `src/utils.py`, `notebooks/05_data_efficiency.ipynb`, `check_setup.py`, `results/metrics.csv` |
+| Rohan | [rohans-oss](https://github.com/rohans-oss) | E - Evaluation + Grad-CAM + t-SNE | `src/evaluate.py`, `src/gradcam.py`, `notebooks/04_evaluation_and_explainability.ipynb` |
 
 The website in `app/` is built by AI after Gate 2 (Wednesday night) and disclosed in the report. No member owns it.
 
