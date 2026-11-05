@@ -3,6 +3,8 @@
 Read this whole file once. Then read your own task card in section 4 again before you start.
 Dates: Monday 2 Nov to Friday 6 Nov 2026. Friday is the live demo + viva (no slides).
 
+**Folder layout (since 2026-11-05):** the repository has `Backend/` (all code, notebooks, results and docs: paths in this plan such as `src/` or `docs/log/` are inside it) and `frontend/` (the website pages by Tejash). Run every command inside `Backend/`. The old layout is kept on the branch `backup`.
+
 **IF YOU USE AI OF ANY KIND (ChatGPT, Claude, Gemini, Copilot, anything): upload or paste THIS WHOLE FILE into the AI as your very first message, before you ask it anything.** Section 6A tells the AI what it must do, and it writes its own disclosure for us, so nobody has to remember or tidy up afterwards. Please read section 6A yourself before you use AI.
 
 ## 0. Four rules that protect all of us

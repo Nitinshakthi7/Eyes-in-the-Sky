@@ -1,0 +1,8 @@
+# Local tool state (lives next to the two folders)
+.october/
+.claude/
+
+# Python virtual environment and caches, if created at the repository root
+.venv/
+__pycache__/
+.ipynb_checkpoints/

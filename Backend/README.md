@@ -11,7 +11,7 @@ We classify EuroSAT satellite images (RGB, 64x64 pixels, 27,000 images, 10 land-
 - how accuracy changes when we use less training data (data-efficiency study),
 - what the model looks at and where it fails (confusion matrix, Grad-CAM, t-SNE).
 
-A small website (FastAPI + plain HTML/CSS/JS in `app/`, built with AI help and disclosed in the report) will show predictions live in the demo. It runs fully offline.
+A small website (FastAPI + plain HTML/CSS/JS in `app/`, built with AI help and disclosed in the report) will show predictions live in the demo. It runs fully offline. The page design made by Tejash is in the `frontend/` folder next to `Backend/`; its `API.md` says what the server must provide.
 
 Team rules:
 
@@ -21,6 +21,15 @@ Team rules:
 - Every file has an owner who can explain every line of it.
 
 Project state: the Part A data split and EDA are in the repository. Tejash's Part B scratch CNN baseline and two ablations are complete. See the Part B results below. Other project parts are tracked in the plan and may still be in progress.
+
+## Folder layout
+
+This repository has two folders:
+
+- `Backend/` - the CNN project: code, notebooks, results, docs and this README. **Every command in this README runs inside `Backend/`.**
+- `frontend/` - the website pages (HTML) made by Tejash. `frontend/API.md` says what the server in `Backend/app/` must provide.
+
+The branch `backup` keeps the old layout (everything in the repository root) from before 2026-11-05.
 
 ## Setup (Windows)
 
@@ -33,11 +42,11 @@ Use PowerShell. Do the steps in order.
    git --version
    ```
 
-2. Clone the repo and go into the folder:
+2. Clone the repo and go into the `Backend` folder (all later steps happen there):
 
    ```
    git clone https://github.com/Nitinshakthi7/Eyes-in-the-Sky.git
-   cd Eyes-in-the-Sky
+   cd Eyes-in-the-Sky\Backend
    ```
 
 3. Make a virtual environment (a private box for this project's Python packages) and switch it on:
