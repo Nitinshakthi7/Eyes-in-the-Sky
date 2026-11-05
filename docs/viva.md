@@ -48,7 +48,42 @@ Every member must be able to explain the whole pipeline, not only their own part
    Answer: Running seeds 0, 1 and 2 showed very small spread (`0.12%` to `0.32%` SD for the transfer models), meaning training is stable across different random head initialisations, batch shuffle orders and augmentation draws on our fixed split. However, the `+0.29 pp` gap between `mobilenet_v2_full` (`98.27%`) and `resnet18_full` (`97.98%`) is too small across 3 seeds to claim one architecture is statistically superior. We used sample standard deviation (`ddof=1`, dividing by $n - 1$) because 3 seeds are a small sample and it matches Part B's baseline formula.
 
 ## Part D - Shared training, data-efficiency study and repo (Nitin)
-6 likely viva questions + short answers - TODO
+*Drafted by Claude Code from Nitin's code and results. Nitin has not checked or rewritten these yet. Questions 15 to 17 cover the Part E checks (notebook 04 section 9 and the Grad-CAM control), which are Rohan's part; Rohan writes his own for Part E.*
+
+1. Question: Why do we set a seed?
+   Answer: So a run can be repeated and two settings can be compared fairly. We also run several seeds, because one seed can be lucky.
+2. Question: Does the same seed give exactly the same result on every laptop?
+   Answer: Not always. Different GPUs and driver versions round decimals a little differently. We fix the seed, record the versions, and report mean and spread.
+3. Question: Why do we seed Python, numpy and PyTorch separately?
+   Answer: Each one has its own random-number generator. Python's is used when picking items, numpy's by scikit-learn and pandas, and PyTorch's for weights, dropout, shuffling and augmentation.
+4. Question: What do `cudnn.deterministic = True` and `cudnn.benchmark = False` do?
+   Answer: They make the GPU use the same convolution method every time instead of picking the fastest one, so runs are repeatable. The cost is that it can be a little slower.
+5. Question: What does `get_device()` do on a laptop without a GPU?
+   Answer: It returns the CPU, so the same code runs everywhere, only slower.
+6. Question: Why do we keep folder paths in `utils.py` instead of typing them where we need them?
+   Answer: One place to change, no typing mistakes, and it works on every laptop because it is calculated from where the file lives.
+7. Question: Why does `train()` keep all the images in memory?
+   Answer: Opening and decoding the image files every epoch was slow (Tejash's runs took 45 to 90 seconds per epoch). In memory an epoch takes about 5 seconds on my laptop. It is the same maths, and we checked it against the original loader.
+8. Question: How do you know the fast version is correct?
+   Answer: The pixels equal Srivalli's loader's pixels, every augmented image is one of the 8 allowed turns or flips, the subsets are the same images her code picks, and full runs reproduced Tejash's results (baseline mean 92.79% against 92.72%, same ordering of the ablations).
+9. Question: What happens if `train()` is run twice with the same model, fraction and seed?
+   Answer: It gives the same numbers, because of the seed, and the second run replaces its row in `metrics.csv` instead of adding a duplicate.
+10. Question: Where is the test set used in `train()`, and where is it not?
+   Answer: It is scored once at the end, after the best epoch was chosen on validation. Nothing is decided from it.
+11. Question: Why macro-F1 as well as accuracy?
+   Answer: The classes have different sizes. Macro-F1 gives each class the same weight, so a weak small class cannot hide behind a good accuracy.
+12. Question: What does the data-efficiency study show?
+   Answer: Transfer learning helps most when labels are scarce. With 945 labelled images (5%) MobileNetV2 reaches 93.69%, about one point better than the scratch CNN with all 18,900 images (92.72%). The gap shrinks from 16.6 points at 5% to 5.6 points at 100% but does not close.
+13. Question: Why compare against MobileNetV2 and not ResNet-18?
+   Answer: It was the best transfer model on the validation set (98.22% against 97.69%), and the test numbers agree. We chose on validation, not on test.
+14. Question: What are the limits of this study?
+   Answer: All sizes get the same budget of up to 20 epochs, so small sets get fewer weight updates and may be under-trained. MobileNetV2 was chosen on the full data and not tuned per size. It uses only 3 seeds (seeds 3 and 4 are still missing), and the random split may let neighbouring patches into train and test.
+15. Question: Why does Grad-CAM use the last convolution block, and what is the limit on our data?
+   Answer: It is the deepest layer that still keeps where things are, and it holds the most class-specific features. After it the average pooling throws position away. On 64 x 64 images that block is only 2 x 2 cells, so the heat map is very coarse.
+16. Question: How did you check that Grad-CAM can be trusted?
+   Answer: We painted a patch of 25% of the pixels with the average colour and measured how much the confidence fell. The hottest patch cost 0.064, the coldest 0.061, a random square 0.089. The hottest quarter was the bottom-right in 160 of 200 images and the top-left in none. So the heat maps did not find a more important region; we treat them as pictures, not proof. A first version of the check used scattered random pixels and was unfair, so we redid it with patches.
+17. Question: Which classes are confused, and what does the model's confidence tell us?
+   Answer: 52% of the 69 mistakes are among AnnualCrop, PermanentCrop, Pasture and HerbaceousVegetation (biggest pair: 7 AnnualCrop called PermanentCrop). Right answers average 99.0% confidence, wrong ones 76.3%, but a "below 80%" rule would flag 60 correct answers to catch 39 of 69 mistakes.
 
 ## Part E - Evaluation, Grad-CAM and t-SNE (Rohan)
 1. Question: What is a confusion matrix?
