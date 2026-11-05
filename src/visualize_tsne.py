@@ -1,4 +1,3 @@
-
 """visualize_tsne.py - MobileNetV2 feature visualization."""
 import os
 
@@ -30,7 +29,7 @@ model = build_transfer_model("mobilenet_v2", freeze=False)
 checkpoint = MODELS_DIR / "mobilenet_v2_full_frac1_seed0.pth"
 
 model.load_state_dict(
-    torch.load(checkpoint, map_location=device)
+    torch.load(checkpoint, map_location=device, weights_only=True)
 )
 
 model.to(device)
@@ -63,7 +62,7 @@ with open(split_file, "r", newline="", encoding="utf-8") as file:
 print("Total test images:", len(test_rows))
 
 
-# Randomly select 2000 test images
+# Randomly select 1000 test images (fixed seed 42)
 random.Random(42).shuffle(test_rows)
 test_rows = test_rows[:1000]
 

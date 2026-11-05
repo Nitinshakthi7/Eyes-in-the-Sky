@@ -1,4 +1,8 @@
-﻿
+"""Grad-CAM for one correct image of every class (first correct image in file order) plus one mistake per class.
+
+Run from the repo folder:  python -m src.gradcam_all_classes
+"""
+
 import torch
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -7,9 +11,9 @@ from PIL import Image
 from torchvision import transforms
 from pathlib import Path
 
-from models import build_transfer_model
-from gradcam import grad_cam
-from utils import DATA_DIR, MODELS_DIR, RESULTS_DIR
+from src.models import build_transfer_model
+from src.gradcam import grad_cam
+from src.utils import DATA_DIR, FIGURES_DIR, MODELS_DIR, RESULTS_DIR, SPLITS_CSV
 
 device = torch.device("cpu")
 
@@ -21,7 +25,7 @@ class_names = [
 
 model = build_transfer_model("mobilenet_v2", freeze=False)
 checkpoint = MODELS_DIR / "mobilenet_v2_full_frac1_seed0.pth"
-model.load_state_dict(torch.load(checkpoint, map_location=device))
+model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
 model.to(device)
 model.eval()
 
@@ -34,7 +38,7 @@ transform = transforms.Compose([
     )
 ])
 
-splits = pd.read_csv(Path("data/splits.csv"))
+splits = pd.read_csv(SPLITS_CSV)
 test_df = splits[splits["split"] == "test"].reset_index(drop=True)
 wrong_df = pd.read_csv(RESULTS_DIR / "misclassified_images.csv")
 
@@ -110,7 +114,7 @@ for i, (class_name, image, is_correct) in enumerate(samples):
 
 plt.tight_layout()
 
-output = RESULTS_DIR / "figures" / "gradcam_all_classes.png"
+output = FIGURES_DIR / "gradcam_all_classes.png"
 plt.savefig(output, dpi=150)
 plt.close()
 

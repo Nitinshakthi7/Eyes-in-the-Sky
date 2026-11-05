@@ -1,4 +1,3 @@
-
 import torch
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -16,7 +15,7 @@ device = torch.device("cpu")
 model = build_transfer_model("mobilenet_v2", freeze=False)
 
 checkpoint = MODELS_DIR / "mobilenet_v2_full_frac1_seed0.pth"
-model.load_state_dict(torch.load(checkpoint, map_location=device))
+model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
 model.to(device)
 model.eval()
 

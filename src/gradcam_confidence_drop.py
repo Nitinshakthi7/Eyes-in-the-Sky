@@ -1,5 +1,11 @@
-﻿
-"""Grad-CAM confidence-drop experiment."""
+"""Grad-CAM confidence-drop experiment.
+
+Masks the hottest 20% of pixels of 50 correctly classified test images and measures how much the confidence falls.
+Caution: there is NO control here (no coldest-area or random-area patch), so a small drop alone does not show that the
+highlighted area matters. See src/gradcam_sanity_check.py for the control.
+
+Run from the repo folder:  python -m src.gradcam_confidence_drop
+"""
 
 import torch
 import pandas as pd
@@ -10,9 +16,9 @@ from PIL import Image
 from torchvision import transforms
 from pathlib import Path
 
-from models import build_transfer_model
-from gradcam import grad_cam
-from utils import DATA_DIR, MODELS_DIR, RESULTS_DIR
+from src.models import build_transfer_model
+from src.gradcam import grad_cam
+from src.utils import DATA_DIR, FIGURES_DIR, MODELS_DIR, RESULTS_DIR
 
 device = torch.device("cpu")
 SAMPLE_SIZE = 50
@@ -30,7 +36,7 @@ class_names = [
 
 model = build_transfer_model("mobilenet_v2", freeze=False)
 checkpoint = MODELS_DIR / "mobilenet_v2_full_frac1_seed0.pth"
-model.load_state_dict(torch.load(checkpoint, map_location=device))
+model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
 model.to(device)
 model.eval()
 
@@ -120,7 +126,7 @@ if len(results_df) > 0:
     plt.ylim(0, 1)
     plt.tight_layout()
 
-    output_fig = RESULTS_DIR / "figures" / "gradcam_confidence_drop.png"
+    output_fig = FIGURES_DIR / "gradcam_confidence_drop.png"
     plt.savefig(output_fig, dpi=150, bbox_inches="tight")
     plt.close()
 
