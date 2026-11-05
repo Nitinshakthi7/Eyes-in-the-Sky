@@ -1,20 +1,8 @@
-# October desktop - local canvas state
+# Local tool state (lives next to the two folders)
 .october/
-
-# Claude Code local settings (not part of the project)
 .claude/
 
-# Python and virtual environment
+# Python virtual environment and caches, if created at the repository root
 .venv/
 __pycache__/
 .ipynb_checkpoints/
-
-# Big files: never commit datasets, weights or checkpoints
-checkpoints/
-*.pth
-*.pt
-data/*
-!data/README.md
-!data/splits.csv
-models/*
-!models/README.md
