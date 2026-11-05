@@ -61,6 +61,35 @@ The website is an extra. It is not graded by the brief. AI builds it after Gate 
 
 Times for each baton are guesses (about 3 hours each). If a baton is more than 1 hour late, the next person starts from stubs. The late person still finishes their part and keeps the credit.
 
+### Friday run-of-show (the slot is 1 hour)
+
+*Draft written with Claude on 2026-11-05 from Nitin's message that the slot is 1 hour. Names and minutes are proposals: the team agrees on them at the mock viva. There are no slides: the live demo and our notebooks are the presentation.*
+
+| Minutes | Who | What to open and say |
+|---|---|---|
+| 0 to 5 | Nitin | The problem, EuroSAT (27,000 tiles, 10 classes) and the pipeline: fixed split, scratch CNN, transfer learning, data efficiency, explainability. Open `Backend/README.md` and the website's Story page |
+| 5 to 11 | Srivalli | Part A: `notebooks/01_eda.ipynb`, the fixed 70/15/15 split and the leakage check |
+| 11 to 18 | Tejash | Part B: the scratch CNN and the ablations (BatchNorm, depth) with the learning curves |
+| 18 to 25 | Rachana | Part C: frozen against fully fine-tuned (about 87% against 98%) and the caveat that the learning rate also differs |
+| 25 to 31 | Nitin | Part D: the shared `train()` and the data-efficiency plot (93.7% with 5% of the labels) |
+| 31 to 39 | Rohan | Part E: confusion matrix, why AnnualCrop and PermanentCrop get mixed up, Grad-CAM with its limits, t-SNE |
+| 39 to 47 | Anyone | The website: 2 or 3 successes, then the failures below |
+| 47 to 60 | Everyone | Questions. The teacher can ask anyone about any part, so every member must have read the others' logs and `docs/viva.md` |
+
+**Failures we show on purpose** (try each once before Friday; they come from our own tests):
+- `Backend/data/eurosat/2750/River/River_1023.jpg`: MobileNetV2 and ResNet-18 say River, the scratch CNN says Highway (86.7% sure).
+- `AnnualCrop_1094.jpg`, `AnnualCrop_1441.jpg`, `AnnualCrop_1592.jpg`, `AnnualCrop_1968.jpg` (in `Backend/data/eurosat/2750/AnnualCrop/`): in Rohan's list of the 69 test mistakes, called PermanentCrop.
+- A plain colour square or a normal photo: the model still picks one of its 10 classes, sometimes with 100% confidence (it has no "none of these" class).
+- A zoomed-in crop of a tile: accuracy fell from 98% to about 36% at 2x zoom in our test.
+- One sentence for every failure: "The model was trained on 64 x 64 Sentinel-2 tiles and knows only 10 classes. Inside that world it is about 98% right; outside it, it is guessing."
+
+**Before the demo:**
+- [ ] Run the website on the demo laptop with Wi-Fi off (`python -m app.server` inside `Backend/`, then <http://127.0.0.1:8000/>) and run `python -m app.test_server`.
+- [ ] The weights for ResNet-18 and the scratch CNN are only on Nitin's laptop for now (item 10 in `docs/log/nitin.md`): bring that laptop or copy `Backend/models/*.pth`.
+- [ ] Decide who covers Part E if Rohan cannot be there in person (he is out of state).
+- [ ] Mock viva (Thursday night or Friday morning): everyone answers questions about someone else's part.
+- [ ] Everyone reads their own log and marks what they still do not understand.
+
 ## 4. Task cards
 
 ### Team settings (so the comparison is fair, change only by agreement)
@@ -335,7 +364,7 @@ I am an AI and can make mistakes. Everything marked NOT RUN was not run by me. T
 ## 9. Questions we still need to ask our teacher in writing
 
 1. Can the viva cover any part of the project, including the website and the AI-written code?
-2. What is the length of our review slot, and what is the report deadline?
+2. What is the length of our review slot, and what is the report deadline? (The slot is 1 hour, Nitin told us on 2026-11-05; the report deadline is still unknown.)
 3. Are marks individual, team, or both?
 4. Are a few small sample images in the repo allowed under "do not commit the raw dataset"?
 5. Is 64x64 input for the ImageNet models acceptable, or do you expect 224x224?
