@@ -51,4 +51,20 @@ Every member must be able to explain the whole pipeline, not only their own part
 6 likely viva questions + short answers - TODO
 
 ## Part E - Evaluation, Grad-CAM and t-SNE (Rohan)
-6 likely viva questions + short answers - TODO
+1. Question: What is a confusion matrix?
+   Answer: A confusion matrix shows how many images were correctly and incorrectly predicted for each class. It helps us identify which classes the model confuses.
+
+2. Question: What is Macro-F1, and why did we use it?
+   Answer: Macro-F1 calculates the F1 score for each class and takes their average. Every class gets equal importance, even if some classes have fewer images.
+
+3. Question: What is Grad-CAM, and how did we use it?
+   Answer: Grad-CAM highlights image regions that influence the model's prediction. We used it to understand which areas of satellite images the model focuses on. [Correction by Nitin, made with Claude on 2026-11-05; Rohan to confirm: on our model the heat maps are only 2 x 2 cells and were hottest in the bottom-right for 80% of 200 test images, and hiding the hottest area hurt no more than hiding the coldest, so Grad-CAM here is a rough picture, not proof of what the model focuses on.]
+
+4. Question: What is our confidence-drop experiment?
+   Answer: We masked the top 20% important pixels identified by Grad-CAM in 50 correctly classified images. We compared the original confidence with the confidence after masking. The average confidence dropped by 1.08 percentage points. [Correction by Nitin, made with Claude on 2026-11-05; Rohan to confirm: that experiment had no control. With a control (hide the coldest area, or a random square) the drops were 0.061 and 0.089 against 0.064 for the hottest area, so it does not show that the highlighted pixels matter.]
+
+5. Question: What is t-SNE, and why did we use it?
+   Answer: t-SNE reduces high-dimensional features into two dimensions. We used it to visualize similarities and clusters between 1,000 satellite images.
+
+6. Question: Why did we perform error analysis?
+   Answer: Error analysis helps us understand model mistakes. We found 69 misclassified images and observed that similar agricultural classes were often confused.

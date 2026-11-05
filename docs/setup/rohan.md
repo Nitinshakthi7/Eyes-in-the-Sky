@@ -21,11 +21,14 @@
 | NVIDIA GPU | WARN | no NVIDIA GPU or driver found |
 | PyTorch | OK | version 2.15.0+cpu, CUDA build none (CPU-only build), cuda available = False |
 | PyTorch GPU | WARN | no GPU for PyTorch, will use CPU |
-| Disk space | OK | 315.0 GB free |
-| Speed Small CNN | OK | 181 images/s, 104 s per epoch, 34.8 min for 20 epochs |
-| Speed ResNet-18 | OK | 54 images/s, 350 s per epoch, 116.5 min for 20 epochs |
+| Disk space | OK | 313.2 GB free |
+| Speed Small CNN | OK | 172 images/s, 110 s per epoch, 36.6 min for 20 epochs |
+| Speed ResNet-18 | OK | 58 images/s, 325 s per epoch, 108.3 min for 20 epochs |
 | Verdict | OK | Take a non-training part (A or E), or train on a teammate's GPU |
+| EuroSAT dataset | OK | 27000 images, 10 classes |
+| ResNet-18 weights | OK | downloaded to the torch cache |
+| MobileNetV2 weights | OK | downloaded to the torch cache |
 
 Team line:
 
-    Rohan | Python 3.12.10 | torch 2.15.0+cpu + CUDA none (CPU-only build) | CPU only | ResNet-18 350 s/epoch | Take a non-training part (A or E), or train on a teammate's GPU
+    Rohan | Python 3.12.10 | torch 2.15.0+cpu + CUDA none (CPU-only build) | CPU only | ResNet-18 325 s/epoch | Take a non-training part (A or E), or train on a teammate's GPU
