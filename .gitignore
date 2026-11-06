@@ -6,3 +6,6 @@
 .venv/
 __pycache__/
 .ipynb_checkpoints/
+
+# demo images for the website (copies of dataset images)
+study-guide/demo_images/

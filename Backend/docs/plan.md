@@ -341,14 +341,15 @@ I am an AI and can make mistakes. Everything marked NOT RUN was not run by me. T
 
 | Section | Writer |
 |---|---|
-| Title page (leader marked), abstract (150 to 200 words), data-efficiency results, conclusion, contribution table and repo link on page 1, AI-usage paragraph, final assembly | Nitin |
+| Final assembly: builds the whole report from the five sections, title page, abstract, conclusion, contribution table and repo link on page 1, AI-usage paragraph | Srivalli |
+| Review: checks every section, adds teammates' feedback; writes the data-efficiency results section | Nitin (leader) |
 | Dataset; limitations, ethics, future work | Srivalli |
 | Methodology; scratch CNN results and ablations | Tejash |
 | Introduction; related work; transfer results | Rachana |
 | Error analysis and explainability | Rohan |
-| References | Everybody adds their own sources (from section 5 of your log); Nitin formats |
+| References | Everybody adds their own sources (from section 5 of your log); Srivalli formats |
 
-**AI-usage paragraph (template, Nitin fills it in):**
+**AI-usage paragraph (template, Srivalli fills it in, Nitin checks it):**
 
 > We used AI assistants in this project. Claude Code was used to [what it did, for example: generate the repository skeleton and the laptop check script, plan the schedule, and build the demo website]. [Name] used [tool] to [what it did]. We checked the AI output by [what we did: ran the code, read every line, compared with the documentation]. Every member can explain the code in their part. The full log is in `docs/ai_usage.md`.
 

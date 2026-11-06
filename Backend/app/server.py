@@ -251,7 +251,7 @@ def api_predict(image: UploadFile = File(...), model: str = Form(None)):
         "confidence": float(top.values[0]),
         "ms": elapsed_ms,
         "top3": [{"label": CLASSES[int(i)], "prob": float(p)} for p, i in zip(top.values, top.indices)],
-        "probs": [{"label": CLASSES[int(i)], "prob": float(p)} for i in order],
+        "probs": [{"label": CLASSES[int(i)], "prob": float(probabilities[i])} for i in order],
         "gradcam": overlay_png(heat.numpy(), picture.size),
     }
 
