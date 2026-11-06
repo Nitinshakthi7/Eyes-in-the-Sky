@@ -1,0 +1,1697 @@
+<!doctype html><html><head><meta charset='utf-8'><title>Part2_Srivalli_Data_EDA_Split</title><style>
+@page { size: A4; margin: 16mm 14mm; }
+body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10pt; line-height: 1.4; color:#111; }
+h1 { font-size: 20pt; color:#1f3a5f; border-bottom: 3px solid #1f3a5f; padding-bottom:4px; }
+h2 { font-size: 14pt; color:#1f3a5f; margin-top:18px; border-bottom:1px solid #ccc; }
+h3 { font-size: 11.5pt; color:#2b5d8a; margin-top:14px; }
+table { border-collapse: collapse; width:100%; margin:6px 0 10px; font-size:9pt; page-break-inside:auto; }
+th, td { border:1px solid #bbb; padding:3px 5px; vertical-align:top; text-align:left; }
+th { background:#e8eef5; }
+tr { page-break-inside: avoid; }
+pre { background:#f4f5f7; border:1px solid #ddd; padding:6px; font-family: Consolas, 'Courier New', monospace; font-size:7.6pt; line-height:1.25; white-space:pre-wrap; word-wrap:break-word; page-break-inside:auto; }
+code { font-family: Consolas, 'Courier New', monospace; font-size:8.8pt; background:#f1f1f1; padding:0 2px; }
+pre code { background:none; padding:0; font-size:7.6pt; }
+blockquote { border-left:3px solid #8aa; margin:6px 0; padding:2px 10px; color:#333; background:#f7fbfb; }
+</style></head><body><h1>Part 2 – Srivalli: Data, EDA and the fixed split (Part A)</h1>
+<h2>What my part is</h2>
+<p>My part is the data foundation of the project. Every model in the team (the scratch CNN, the transfer-learning models, the data-efficiency study and the explainability work) reads images through the code I wrote, so if my part is wrong, every result is wrong. I own three things: <code>src/dataset.py</code> (the code that loads the images, makes the split, normalises them, augments them and builds the data loaders), <code>data/splits.csv</code> (the saved list that says which image is in train, validation or test), and <code>notebooks/01_eda.ipynb</code> (the exploratory data analysis, with the leakage check at the top). The fixed split is the most important output: everybody uses the same 18,900 / 4,050 / 4,050 images, so every team member's score can be compared. The notebook shows what the data looks like (class counts, sample images, colours, histograms), and it checks that there is no leakage between the splits. I also explain why the augmentations (90-degree rotations and flips) are safe for satellite images, and why the test set must never be used while we make decisions.</p>
+<hr />
+<h2>Definitions</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Simple meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>EuroSAT</td>
+<td>A public dataset of satellite image patches, labelled with land-use classes. We use the RGB version.</td>
+</tr>
+<tr>
+<td>Sentinel-2</td>
+<td>A European Earth-observation satellite. EuroSAT images come from its multispectral sensor.</td>
+</tr>
+<tr>
+<td>RGB</td>
+<td>Red, Green, Blue. The image has three colour channels, so we keep only the three visible bands.</td>
+</tr>
+<tr>
+<td>Tile (patch)</td>
+<td>One small image cut from a larger satellite picture. In EuroSAT each tile is 64 x 64 pixels.</td>
+</tr>
+<tr>
+<td>Class</td>
+<td>One land-use label, for example Forest or River. There are 10 classes.</td>
+</tr>
+<tr>
+<td>Label</td>
+<td>The class number attached to an image. In our data the labels are 0 to 9.</td>
+</tr>
+<tr>
+<td>Split</td>
+<td>One of the three parts of the data: train, validation (val) or test.</td>
+</tr>
+<tr>
+<td>Train set</td>
+<td>The images the model learns from.</td>
+</tr>
+<tr>
+<td>Validation set</td>
+<td>Images used during development to compare settings and to decide when to stop.</td>
+</tr>
+<tr>
+<td>Test set</td>
+<td>Images kept back for the final score. They are not used to make decisions.</td>
+</tr>
+<tr>
+<td>Stratified split</td>
+<td>A split that keeps each class at the same share in every part (for example 70% of each class goes to train).</td>
+</tr>
+<tr>
+<td>Data leakage</td>
+<td>When information from the test (or validation) data reaches training, so the score looks better than it really is.</td>
+</tr>
+<tr>
+<td>Leakage (exact copy)</td>
+<td>The same picture appearing in two splits, under the same or a different file name.</td>
+</tr>
+<tr>
+<td>Leakage (neighbouring patches)</td>
+<td>Two tiles cut from the same large area land in different splits. They look alike, so this can still inflate the score. We could not remove this with a random split.</td>
+</tr>
+<tr>
+<td>MD5 hash</td>
+<td>A short fingerprint (32 hex characters) computed from a file's bytes. Two files with the same MD5 have the same content.</td>
+</tr>
+<tr>
+<td>Augmentation</td>
+<td>Making small changes to training images (rotate, flip) so the model sees more variety.</td>
+</tr>
+<tr>
+<td>Label-safe augmentation</td>
+<td>An augmentation that does not change the true class of the image.</td>
+</tr>
+<tr>
+<td>Rotation</td>
+<td>Turning the image around its centre. We use only 0, 90, 180 and 270 degrees, so no pixels are blurred.</td>
+</tr>
+<tr>
+<td>Flip</td>
+<td>Mirroring the image left-right (horizontal) or top-bottom (vertical).</td>
+</tr>
+<tr>
+<td>Normalisation</td>
+<td>Shifting and scaling pixel values with a fixed mean and standard deviation, so the numbers are in a similar range for the model.</td>
+</tr>
+<tr>
+<td>ImageNet mean and std</td>
+<td>The fixed numbers (mean 0.485, 0.456, 0.406 and std 0.229, 0.224, 0.225 for R, G, B) that were measured on the ImageNet photo dataset. We use them for all models so the comparison is fair.</td>
+</tr>
+<tr>
+<td>Tensor</td>
+<td>A PyTorch array of numbers. The model takes tensors, not PIL images.</td>
+</tr>
+<tr>
+<td>PIL image</td>
+<td>An image object from the Pillow library. We read files as PIL images, then convert them.</td>
+</tr>
+<tr>
+<td>Dataset (PyTorch)</td>
+<td>A class that knows how many items there are and returns item number i. Here it returns (image, label).</td>
+</tr>
+<tr>
+<td>DataLoader</td>
+<td>A PyTorch helper that groups items from a Dataset into batches, can shuffle them and can load them in parallel.</td>
+</tr>
+<tr>
+<td>Batch</td>
+<td>A group of images that the model processes together. We use 64 images per batch.</td>
+</tr>
+<tr>
+<td>Shuffle</td>
+<td>Changing the order of the images each epoch, so the model does not see them in the same order every time.</td>
+</tr>
+<tr>
+<td>Epoch</td>
+<td>One full pass through the training images.</td>
+</tr>
+<tr>
+<td>Fraction</td>
+<td>The share of the training split we keep. For example 0.05 keeps 5% of train. Val and test never change.</td>
+</tr>
+<tr>
+<td>Seed</td>
+<td>A number that starts a random generator. The same seed gives the same random choices, so a run can be repeated.</td>
+</tr>
+<tr>
+<td>random_state</td>
+<td>The scikit-learn name for the seed.</td>
+</tr>
+<tr>
+<td>Histogram</td>
+<td>A count of how many pixels have each value (0 to 255). It shows how bright or dark, and how spread out, the pixels are.</td>
+</tr>
+<tr>
+<td>Per-channel</td>
+<td>Separately for each colour channel (red, green, blue).</td>
+</tr>
+<tr>
+<td>Mean colour</td>
+<td>The average value of the red, green and blue pixels of one class.</td>
+</tr>
+<tr>
+<td>Percentile</td>
+<td>The value below which a given share of pixels fall. The 5th percentile means 5% of pixels are darker than this value.</td>
+</tr>
+<tr>
+<td>Clipping</td>
+<td>When bright pixels all go to the maximum value (255), so many pixels pile up at one value.</td>
+</tr>
+<tr>
+<td>Class imbalance</td>
+<td>Classes that have different numbers of images. Here the ratio is at most 1.5 to 1.</td>
+</tr>
+<tr>
+<td>Macro-F1</td>
+<td>A score that averages the F1 score of each class equally, so small classes count as much as big ones. We report it with accuracy.</td>
+</tr>
+<tr>
+<td>EDA</td>
+<td>Exploratory data analysis: looking at the data with counts and plots before training.</td>
+</tr>
+<tr>
+<td>assert</td>
+<td>A Python statement that stops the program with an error if a condition is false.</td>
+</tr>
+<tr>
+<td>pandas DataFrame</td>
+<td>A table in memory, with named columns. We use it for the list of images and their splits.</td>
+</tr>
+<tr>
+<td>CSV</td>
+<td>A plain text table with commas between values.</td>
+</tr>
+<tr>
+<td>scikit-learn <code>train_test_split</code></td>
+<td>A function that cuts data into two parts, with optional stratification and a seed.</td>
+</tr>
+<tr>
+<td>torchvision</td>
+<td>The PyTorch library for images. It gives us the EuroSAT dataset and the image transforms.</td>
+</tr>
+<tr>
+<td>Lazy loading</td>
+<td>Reading an image from disk only when it is asked for, instead of holding all 27,000 in memory.</td>
+</tr>
+<tr>
+<td>Ablation</td>
+<td>A test where one part is removed, to see how much it mattered.</td>
+</tr>
+<tr>
+<td>Data-efficiency study</td>
+<td>Training with 5%, 10%, 25%, 50% and 100% of the train data, to see how the score changes with more data.</td>
+</tr>
+<tr>
+<td>Reproducibility</td>
+<td>Being able to get the same result again from the same code, data and seed.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>Part 1: src/dataset.py, function by function</h2>
+<p>The code below is copied from <code>src/dataset.py</code>. Line numbers in the tables refer to that file. The file starts with a docstring (lines 1 to 15) that lists the functions and says how to make the split: <code>python -m src.dataset</code>.</p>
+<h3>1.1 Imports and constants (lines 17 to 32)</h3>
+<pre><code class="language-python">from pathlib import Path
+
+import pandas as pd
+import torch
+from PIL import Image
+from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader, Dataset
+from torchvision import datasets, transforms
+
+from src.utils import DATA_DIR, SPLITS_CSV
+
+# Team setting: ImageNet numbers for ALL models, so the comparison is fair.
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
+SPLIT_SIZES = {&quot;train&quot;: 18900, &quot;val&quot;: 4050, &quot;test&quot;: 4050}  # 70/15/15 of 27,000
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>17</td>
+<td>Imports <code>Path</code> from the standard library to handle file paths.</td>
+<td>Standard library</td>
+<td><code>Path</code> works on Windows and Linux with the same code. Plain strings with <code>/</code> or <code>\</code> would need care.</td>
+</tr>
+<tr>
+<td>19 to 20</td>
+<td>Imports pandas (tables) and torch (PyTorch).</td>
+<td>Libraries</td>
+<td>pandas reads the CSV and does the split bookkeeping. torch is needed for the DataLoader and tensors.</td>
+</tr>
+<tr>
+<td>21</td>
+<td>Imports <code>Image</code> from Pillow to open JPEG files.</td>
+<td>PIL image</td>
+<td>Pillow is the standard way to read JPEG in Python. <code>torchvision</code> also reads PIL.</td>
+</tr>
+<tr>
+<td>22</td>
+<td>Imports <code>train_test_split</code> from scikit-learn.</td>
+<td>Stratified split</td>
+<td>It has <code>stratify=</code> and <code>random_state=</code>, which we need. We could write our own split, but that is more code and more chances for bugs.</td>
+</tr>
+<tr>
+<td>23</td>
+<td>Imports <code>DataLoader</code> and <code>Dataset</code> from PyTorch.</td>
+<td>Dataset and DataLoader</td>
+<td>These are the standard PyTorch classes that training loops expect.</td>
+</tr>
+<tr>
+<td>24</td>
+<td>Imports <code>datasets</code> and <code>transforms</code> from torchvision.</td>
+<td>torchvision</td>
+<td><code>datasets.EuroSAT</code> gives us the images and labels. <code>transforms</code> gives us rotations, flips, <code>ToTensor</code> and <code>Normalize</code>.</td>
+</tr>
+<tr>
+<td>26</td>
+<td>Imports the shared paths <code>DATA_DIR</code> and <code>SPLITS_CSV</code> from <code>src/utils.py</code>.</td>
+<td>Single source of paths</td>
+<td>Nobody types a path by hand. <code>DATA_DIR</code> is <code>ROOT / "data"</code> and <code>SPLITS_CSV</code> is <code>DATA_DIR / "splits.csv"</code>. The repo folder name has spaces, so this avoids path mistakes.</td>
+</tr>
+<tr>
+<td>29 to 30</td>
+<td>Stores the ImageNet mean and std for R, G, B.</td>
+<td>Normalisation</td>
+<td>The team uses one setting for all models. Pretrained models expect these numbers. We could compute the mean and std of EuroSAT, but then the input would differ from the pretrained models.</td>
+</tr>
+<tr>
+<td>32</td>
+<td>Stores the expected sizes 18,900 / 4,050 / 4,050.</td>
+<td>Expected numbers</td>
+<td><code>check_split</code> compares against these. If the split changes by accident, the check fails.</td>
+</tr>
+</tbody>
+</table>
+<h3>1.2 <code>load_eurosat(root=DATA_DIR)</code> (lines 35 to 38)</h3>
+<pre><code class="language-python">def load_eurosat(root=DATA_DIR):
+    &quot;&quot;&quot;Load the EuroSAT images that check_setup.py downloaded into data/eurosat/2750.&quot;&quot;&quot;
+    # .samples is a list of (file path, label) pairs, .classes is the list of class names
+    return datasets.EuroSAT(root=str(root), download=False)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>35</td>
+<td>Defines the function. <code>root</code> defaults to the <code>data</code> folder.</td>
+<td>Default argument</td>
+<td>The caller can point somewhere else for tests, but normally nothing needs to be passed.</td>
+</tr>
+<tr>
+<td>38</td>
+<td>Opens EuroSAT from <code>data/eurosat/2750</code> without downloading. <code>root=str(root)</code> turns the Path into text.</td>
+<td>torchvision dataset, <code>download=False</code></td>
+<td><code>download=False</code> means the code never downloads 94 MB by surprise. The download is done once by <code>check_setup.py --download</code>. We could list the folders by hand, but torchvision already gives <code>.samples</code> (list of path and label) and <code>.classes</code> (the class names).</td>
+</tr>
+</tbody>
+</table>
+<p>The object returned has <code>.samples</code> (27,000 pairs of file path and label) and <code>.classes</code> (the 10 names in alphabetical order). Label 0 is AnnualCrop, and the order follows the folder names.</p>
+<h3>1.3 <code>make_split(seed=42)</code> (lines 41 to 67)</h3>
+<pre><code class="language-python">def make_split(seed=42):
+    &quot;&quot;&quot;Make the fixed 70/15/15 split and save it to data/splits.csv.&quot;&quot;&quot;
+    eurosat = load_eurosat()
+
+    # One row per image. We save the path from the data folder with &quot;/&quot; so the
+    # same file works on every laptop (the full path is different on each one).
+    rows = []
+    for path, label in eurosat.samples:
+        relative_path = Path(path).relative_to(DATA_DIR).as_posix()
+        rows.append((relative_path, label, eurosat.classes[label]))
+    df = pd.DataFrame(rows, columns=[&quot;path&quot;, &quot;label&quot;, &quot;class_name&quot;])
+
+    # stratify= keeps the same share of each class in every part.
+    # First cut: 70% train, 30% rest.
+    train_idx, rest_idx = train_test_split(
+        df.index, train_size=0.7, stratify=df[&quot;label&quot;], random_state=seed)
+    # Second cut: half of the rest is validation, half is test (15% + 15%).
+    val_idx, test_idx = train_test_split(
+        rest_idx, train_size=0.5, stratify=df.loc[rest_idx, &quot;label&quot;], random_state=seed)
+
+    df.loc[train_idx, &quot;split&quot;] = &quot;train&quot;
+    df.loc[val_idx, &quot;split&quot;] = &quot;val&quot;
+    df.loc[test_idx, &quot;split&quot;] = &quot;test&quot;
+
+    # lineterminator: same line endings on every laptop, so git sees no fake changes
+    df.to_csv(SPLITS_CSV, index=False, lineterminator=&quot;\n&quot;)
+    return df
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>43</td>
+<td>Opens the EuroSAT data.</td>
+<td>Loading</td>
+<td>Same loader as 1.2.</td>
+</tr>
+<tr>
+<td>47 to 52</td>
+<td>Builds one row per image: relative path, integer label and class name.</td>
+<td>Table of images</td>
+<td><code>Path(path).relative_to(DATA_DIR)</code> cuts off the laptop-specific start, so the path is <code>eurosat/2750/...</code>. <code>.as_posix()</code> forces <code>/</code>. Without this the file would only work on one computer.</td>
+</tr>
+<tr>
+<td>51</td>
+<td>Turns the rows into a pandas DataFrame with the column names <code>path</code>, <code>label</code>, <code>class_name</code>.</td>
+<td>DataFrame</td>
+<td>Easy to filter, count and save.</td>
+</tr>
+<tr>
+<td>55 to 56</td>
+<td>First cut: 70% of the row numbers go to <code>train_idx</code>, 30% go to <code>rest_idx</code>. <code>stratify=df["label"]</code> keeps the class shares. <code>random_state=seed</code> (42) makes it repeatable.</td>
+<td>Stratified split, seed</td>
+<td>Without <code>stratify</code>, random chance could put too few images of one class in a part. Without a fixed seed, every run would make a different split.</td>
+</tr>
+<tr>
+<td>58 to 59</td>
+<td>Second cut: the 30% rest is cut in half. Half is validation, half is test, so each is 15% of the whole data. The labels used for stratifying are taken from the <code>rest_idx</code> rows only.</td>
+<td>Three-way split</td>
+<td>scikit-learn only cuts into two parts, so we cut twice. The stratify labels must match the rows being cut (<code>df.loc[rest_idx, "label"]</code>), otherwise the rows and labels would not line up.</td>
+</tr>
+<tr>
+<td>61 to 63</td>
+<td>Writes <code>train</code>, <code>val</code> or <code>test</code> into a new <code>split</code> column for each row.</td>
+<td>pandas <code>.loc</code></td>
+<td>Each image gets exactly one value. A row cannot be in two splits, because the column holds one value per row.</td>
+</tr>
+<tr>
+<td>66</td>
+<td>Saves the table as <code>data/splits.csv</code> with no index column. <code>lineterminator="\n"</code> asks for Unix line endings.</td>
+<td>Reproducibility, git</td>
+<td>Everyone uses the same committed file. See the note on line endings in section 4.2.</td>
+</tr>
+<tr>
+<td>67</td>
+<td>Returns the DataFrame.</td>
+<td>Return value</td>
+<td><code>__main__</code> passes it straight to <code>check_split</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3>1.4 <code>check_split(df)</code> (lines 70 to 89)</h3>
+<pre><code class="language-python">def check_split(df):
+    &quot;&quot;&quot;Prove there is no leakage. Stops with an error if something is wrong.&quot;&quot;&quot;
+    # 1. The split sizes are the expected ones.
+    sizes = df[&quot;split&quot;].value_counts().to_dict()
+    assert sizes == SPLIT_SIZES, f&quot;wrong split sizes: {sizes}&quot;
+
+    # 2. No file appears twice, so no file can be in two splits.
+    assert df[&quot;path&quot;].is_unique, &quot;a file appears in more than one row&quot;
+
+    # 3. Every class has the same share in each split (at most 1 image off from exact rounding).
+    counts = pd.crosstab(df[&quot;class_name&quot;], df[&quot;split&quot;])
+    total_per_class = counts.sum(axis=1)
+    for split, size in SPLIT_SIZES.items():
+        expected = total_per_class * size / len(df)
+        assert ((counts[split] - expected).abs() &lt;= 1).all(), f&quot;{split} is not stratified&quot;
+
+    print(&quot;Leakage check: OK&quot;)
+    print(f&quot;  split sizes: {sizes}&quot;)
+    print(&quot;  no file appears in two splits; every class keeps its share in every split&quot;)
+    return counts
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>73</td>
+<td>Counts the rows per split and turns the result into a dictionary.</td>
+<td><code>value_counts</code></td>
+<td>Simple way to see the sizes.</td>
+</tr>
+<tr>
+<td>74</td>
+<td>Stops with an error if the sizes are not exactly 18,900 / 4,050 / 4,050. The message shows the real sizes.</td>
+<td><code>assert</code>, expected numbers</td>
+<td>A wrong split should fail loudly. The check compares the dictionaries, so the order of the keys does not matter.</td>
+</tr>
+<tr>
+<td>77</td>
+<td>Stops if any <code>path</code> appears twice.</td>
+<td>Data leakage (exact copy by name)</td>
+<td>Each file has one row and one split. A repeated path would mean one file in two splits.</td>
+</tr>
+<tr>
+<td>80</td>
+<td>Builds a table: rows are classes, columns are splits, values are image counts.</td>
+<td><code>pd.crosstab</code></td>
+<td>Shows the class balance in one table, which is also printed in the notebook.</td>
+</tr>
+<tr>
+<td>81</td>
+<td>Adds up each class's total across the three splits.</td>
+<td>Class totals</td>
+<td>Needed to compute the expected share.</td>
+</tr>
+<tr>
+<td>82 to 84</td>
+<td>For each split, computes the expected count per class (class total times split size divided by 27,000) and checks that the real count is at most 1 away.</td>
+<td>Stratification check, rounding</td>
+<td>The check allows 1 image of difference because a count must be a whole number. In our data every value is exact (for example 2,000 x 18,900 / 27,000 = 1,400). We could require exact equality, but that would fail on other data sizes.</td>
+</tr>
+<tr>
+<td>86 to 88</td>
+<td>Prints the result: OK, the sizes and the two plain-English claims.</td>
+<td>Output</td>
+<td>The notebook and the <code>__main__</code> block show these lines.</td>
+</tr>
+<tr>
+<td>89</td>
+<td>Returns the crosstab.</td>
+<td>Return value</td>
+<td>Notebook cell 3 displays it.</td>
+</tr>
+</tbody>
+</table>
+<p>Note: this function checks the file names and the counts only. It does not compare the bytes of the images. That is done by the MD5 check in notebook cell 5 (section 2.3).</p>
+<h3>1.5 <code>augment()</code> (lines 92 to 101)</h3>
+<pre><code class="language-python">def augment():
+    &quot;&quot;&quot;Random 90-degree rotation and flips. Only used on training images.&quot;&quot;&quot;
+    # A satellite looks straight down, so there is no &quot;up&quot;: a rotated or flipped
+    # field is still a field. The angles are exact, so no pixels get blurred.
+    return transforms.Compose([
+        transforms.RandomChoice([transforms.RandomRotation((angle, angle))
+                                 for angle in (0, 90, 180, 270)]),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomVerticalFlip(p=0.5),
+    ])
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>96</td>
+<td><code>Compose</code> runs the steps in order: first rotation, then horizontal flip, then vertical flip.</td>
+<td>Transform pipeline</td>
+<td>Each step is applied to the output of the previous one.</td>
+</tr>
+<tr>
+<td>97 to 98</td>
+<td><code>RandomChoice</code> picks one of four rotation objects: 0, 90, 180 or 270 degrees. <code>(angle, angle)</code> means the range from angle to the same angle, so the rotation is exact.</td>
+<td>Rotation, label-safe augmentation</td>
+<td>If we wrote <code>RandomRotation(90)</code>, torchvision would pick any angle between -90 and +90 degrees, for example 37 degrees. That blurs the pixels and leaves dark empty corners. Exact right angles only move pixels.</td>
+</tr>
+<tr>
+<td>99</td>
+<td><code>RandomHorizontalFlip(p=0.5)</code> flips left-right with a 50% chance.</td>
+<td>Flip</td>
+<td>With the rotations, this gives all 8 orientations of a square (4 rotations times 2 flips).</td>
+</tr>
+<tr>
+<td>100</td>
+<td><code>RandomVerticalFlip(p=0.5)</code> flips top-bottom with a 50% chance.</td>
+<td>Flip</td>
+<td>Same as above.</td>
+</tr>
+</tbody>
+</table>
+<p>The notebook (cell 20) checks that all 8 orientations really occur and that the pixel values do not change. Note that the flips are random, so one image can get any of the 8 orientations on different epochs.</p>
+<h3>1.6 <code>make_transform(use_augment=False)</code> (lines 104 to 108)</h3>
+<pre><code class="language-python">def make_transform(use_augment=False):
+    &quot;&quot;&quot;Turn a PIL image into a normalised tensor, with augmentation if asked.&quot;&quot;&quot;
+    steps = [augment()] if use_augment else []
+    steps += [transforms.ToTensor(), transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)]
+    return transforms.Compose(steps)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>106</td>
+<td>If augmentation is asked for, the list starts with <code>augment()</code>. Otherwise the list is empty.</td>
+<td>Conditional pipeline</td>
+<td>Validation and test use <code>use_augment=False</code>, so they are never augmented.</td>
+</tr>
+<tr>
+<td>107</td>
+<td>Adds <code>ToTensor()</code> and <code>Normalize(...)</code> to the list.</td>
+<td>Normalisation, tensor</td>
+<td><code>ToTensor()</code> turns a PIL image of 0 to 255 integers into a float tensor of 0.0 to 1.0, in the order channel x height x width. <code>Normalize</code> then computes <code>(x - mean) / std</code> for each channel.</td>
+</tr>
+<tr>
+<td>108</td>
+<td>Returns the pipeline.</td>
+<td>Return value</td>
+<td>The Dataset calls this on every image it reads.</td>
+</tr>
+</tbody>
+</table>
+<p>The augmentation runs before <code>ToTensor()</code> because it works on the PIL image. Rotating a tensor would also work, but the PIL version is the standard path.</p>
+<h3>1.7 <code>EuroSATDataset</code> (lines 111 to 125)</h3>
+<pre><code class="language-python">class EuroSATDataset(Dataset):
+    &quot;&quot;&quot;One part of the fixed split: gives back (image, label).&quot;&quot;&quot;
+
+    def __init__(self, split, transform=None):
+        df = pd.read_csv(SPLITS_CSV)
+        self.df = df[df[&quot;split&quot;] == split].reset_index(drop=True)
+        self.transform = transform if transform is not None else make_transform()
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, i):
+        row = self.df.iloc[i]
+        image = Image.open(DATA_DIR / row[&quot;path&quot;]).convert(&quot;RGB&quot;)
+        return self.transform(image), int(row[&quot;label&quot;])
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>111</td>
+<td>The class is a PyTorch <code>Dataset</code>.</td>
+<td>Dataset</td>
+<td>Any PyTorch <code>DataLoader</code> can use it.</td>
+</tr>
+<tr>
+<td>114 to 115</td>
+<td><code>__init__</code> reads <code>splits.csv</code> and keeps only the rows of one split (<code>"train"</code>, <code>"val"</code> or <code>"test"</code>).</td>
+<td>Fixed split</td>
+<td>The file is the single source of truth, so every model reads the same rows.</td>
+</tr>
+<tr>
+<td>116</td>
+<td><code>reset_index(drop=True)</code> renumbers the kept rows 0, 1, 2, ...</td>
+<td>Index</td>
+<td><code>__getitem__(i)</code> uses <code>iloc[i]</code>, so the numbers must have no gaps.</td>
+</tr>
+<tr>
+<td>117</td>
+<td>Stores the transform. If none is given, it uses <code>make_transform()</code> (no augmentation, ImageNet normalisation).</td>
+<td>Default argument</td>
+<td>A safe default: no augmentation unless someone asks.</td>
+</tr>
+<tr>
+<td>120</td>
+<td>Returns the number of images in this split.</td>
+<td><code>__len__</code> rule</td>
+<td>The DataLoader needs the length to plan batches. For train it gives 18,900.</td>
+</tr>
+<tr>
+<td>123</td>
+<td>Reads the row for item <code>i</code>.</td>
+<td><code>iloc</code></td>
+<td>Row lookup in pandas. It is a little slow for large data, but fine for 27,000 small rows. A faster design would keep a NumPy array of paths.</td>
+</tr>
+<tr>
+<td>124</td>
+<td>Opens the image from disk and converts it to RGB. <code>DATA_DIR / row["path"]</code> builds the full path on this laptop.</td>
+<td>Lazy loading, PIL</td>
+<td>Only the images in the current batch are in memory. <code>convert("RGB")</code> makes sure there are three channels, even if a file were grey.</td>
+</tr>
+<tr>
+<td>125</td>
+<td>Returns <code>(image, label)</code>. The label is turned into a plain Python <code>int</code>.</td>
+<td>Dataset rule</td>
+<td>This is what a training loop expects. The <code>int()</code> avoids a pandas number type reaching PyTorch.</td>
+</tr>
+</tbody>
+</table>
+<h3>1.8 <code>get_loader(split, fraction, seed, augment, batch_size, num_workers)</code> (lines 128 to 149)</h3>
+<pre><code class="language-python">def get_loader(split, fraction=1.0, seed=0, augment=False, batch_size=64, num_workers=0):
+    &quot;&quot;&quot;Make the DataLoader for &quot;train&quot;, &quot;val&quot; or &quot;test&quot;.
+
+    fraction: share of the TRAIN split to use (stratified). val and test never shrink.
+    seed:     picks the subset and the shuffle order, so a run can be repeated.
+    augment:  rotations and flips, allowed only for the train split.
+    &quot;&quot;&quot;
+    if split != &quot;train&quot; and (fraction != 1.0 or augment):
+        raise ValueError(&quot;fraction and augment are only for the train split&quot;)
+
+    data = EuroSATDataset(split, transform=make_transform(augment))
+
+    if fraction &lt; 1.0:
+        # Keep the same class shares in the smaller training set.
+        keep, _ = train_test_split(
+            data.df.index, train_size=fraction, stratify=data.df[&quot;label&quot;], random_state=seed)
+        data.df = data.df.loc[sorted(keep)].reset_index(drop=True)
+
+    # Only the training data is shuffled. The generator makes the order repeatable.
+    generator = torch.Generator().manual_seed(seed)
+    return DataLoader(data, batch_size=batch_size, shuffle=(split == &quot;train&quot;),
+                      generator=generator, num_workers=num_workers)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>135 to 136</td>
+<td>Raises an error if someone asks for a fraction or augmentation on val or test.</td>
+<td>Guard against mistakes</td>
+<td>Val and test must be the same in every run. A mistake should stop the run, not quietly change the score.</td>
+</tr>
+<tr>
+<td>138</td>
+<td>Builds the Dataset for the split, with augmentation only if <code>augment=True</code>.</td>
+<td>Transform choice</td>
+<td>Train uses <code>augment</code> as asked. Val and test get <code>augment=False</code> because the guard above forces it.</td>
+</tr>
+<tr>
+<td>140 to 144</td>
+<td>If <code>fraction &lt; 1.0</code>, keeps a stratified random subset of the training rows, with the same class shares, and replaces <code>data.df</code> with it.</td>
+<td>Stratified subset, data efficiency</td>
+<td>At 5% a plain random subset could leave a class with very few images. Stratifying keeps the shares. Different seeds give different subsets, which is what the data-efficiency study measures. <code>sorted(keep)</code> puts the rows back in file order, so the result does not depend on how scikit-learn shuffled them.</td>
+</tr>
+<tr>
+<td>147</td>
+<td>Makes a random generator with a fixed seed.</td>
+<td>Seed, generator</td>
+<td>Only the DataLoader's shuffle uses this generator, so the batch order is repeatable.</td>
+</tr>
+<tr>
+<td>148 to 149</td>
+<td>Builds the DataLoader. <code>shuffle=(split == "train")</code> shuffles train only. <code>batch_size</code> is 64 by default. <code>num_workers=0</code> loads in the main process.</td>
+<td>Mini-batch training</td>
+<td>Shuffling helps learning. Val and test are not shuffled, so the order always matches the file order.</td>
+</tr>
+</tbody>
+</table>
+<p>Two details to know. First, the parameter named <code>augment</code> shadows the function <code>augment()</code> inside <code>get_loader</code>. This works, because <code>get_loader</code> only passes the boolean on to <code>make_transform(augment)</code>, but it is a naming trap. Second, the random augmentations use PyTorch's global random number generator, not the <code>generator</code> object. So repeatability of the augmentations depends on <code>set_seed</code> from <code>src/utils.py</code> (or on the code calling it), not on the <code>seed</code> argument of <code>get_loader</code>. The <code>seed</code> argument only fixes the subset and the shuffle order.</p>
+<h3>1.9 The <code>__main__</code> block (lines 152 to 154)</h3>
+<pre><code class="language-python">if __name__ == &quot;__main__&quot;:
+    # Make data/splits.csv and check it.
+    check_split(make_split())
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>152</td>
+<td>Runs only when the file is started directly, for example <code>python -m src.dataset</code>. It does not run when another file imports it.</td>
+<td><code>__main__</code></td>
+<td>Importing the module must not rewrite <code>splits.csv</code>.</td>
+</tr>
+<tr>
+<td>154</td>
+<td>Makes the split, saves it, then checks it.</td>
+<td>Make and check</td>
+<td>One command makes the file and proves it is correct.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>Part 2: notebooks/01_eda.ipynb, step by step</h2>
+<p>The notebook must run from the repo, with <code>python -m src.dataset</code> run once before it. The colours and histograms use train images only, so the test set is not used to draw conclusions. Cell numbers below are the notebook cell indexes (0 is the first cell). Markdown cells are summarised; code cells are copied.</p>
+<h3>2.1 Cell 0 and cell 1: title and setup</h3>
+<p>Cell 0 is a markdown title with the owner (Srivalli), the part (A) and a reminder to run <code>python -m src.dataset</code> first.</p>
+<pre><code class="language-python">import hashlib
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd().parent))  # the notebook runs in notebooks/, our code is one folder up
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from PIL import Image
+
+from src.dataset import augment, check_split, get_loader
+from src.utils import DATA_DIR, FIGURES_DIR, SPLITS_CSV
+
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+df = pd.read_csv(SPLITS_CSV)
+train = df[df[&quot;split&quot;] == &quot;train&quot;]
+class_names = sorted(df[&quot;class_name&quot;].unique())
+print(len(df), &quot;images,&quot;, len(class_names), &quot;classes&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 to 3</td>
+<td>Imports <code>hashlib</code> (MD5), <code>sys</code> and <code>Path</code>.</td>
+<td>Standard library</td>
+<td>Needed for the fingerprint, the path to the code and the figure folder.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Adds the repo folder (one level up from <code>notebooks/</code>) to Python's import path.</td>
+<td>Import path</td>
+<td>So <code>from src.dataset import ...</code> works from inside <code>notebooks/</code>.</td>
+</tr>
+<tr>
+<td>7 to 10</td>
+<td>Imports plotting and data libraries.</td>
+<td>matplotlib, numpy, pandas, Pillow</td>
+<td>matplotlib draws the plots, numpy does the histogram maths, pandas holds the table, Pillow opens images.</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Imports our own functions and paths.</td>
+<td>Reuse</td>
+<td>The notebook uses the same <code>check_split</code>, <code>augment</code> and <code>get_loader</code> as training, so it shows what the models see.</td>
+</tr>
+<tr>
+<td>14</td>
+<td>Creates the figure folder if it does not exist.</td>
+<td>Folder setup</td>
+<td><code>parents=True</code> creates missing parents, <code>exist_ok=True</code> avoids an error if it already exists.</td>
+</tr>
+<tr>
+<td>15 to 17</td>
+<td>Reads the CSV, keeps the train rows, and sorts the class names.</td>
+<td>Sorted class order</td>
+<td>Sorting gives the same order in every plot.</td>
+</tr>
+<tr>
+<td>18</td>
+<td>Prints the total and the number of classes.</td>
+<td>Sanity check</td>
+<td>Output: <code>27000 images, 10 classes</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3>2.2 Cell 3: leakage check (section 1 of the notebook)</h3>
+<pre><code class="language-python">counts = check_split(df)
+counts[[&quot;train&quot;, &quot;val&quot;, &quot;test&quot;]]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Runs the same check as the <code>__main__</code> block and keeps the crosstab.</td>
+<td>Leakage check</td>
+<td>The notebook prints <code>Leakage check: OK</code> before any plot, as the markdown asks.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Displays the per-class table.</td>
+<td>Table output</td>
+<td>The reader sees the class shares directly.</td>
+</tr>
+</tbody>
+</table>
+<p>Output: <code>Leakage check: OK</code>, <code>split sizes: {'train': 18900, 'val': 4050, 'test': 4050}</code>, and the table in section 8 below.</p>
+<h3>2.3 Cell 5: MD5 duplicate check</h3>
+<pre><code class="language-python"># Same fingerprint = exactly the same file content.
+df[&quot;md5&quot;] = [hashlib.md5((DATA_DIR / p).read_bytes()).hexdigest() for p in df[&quot;path&quot;]]
+
+splits_per_copy = df.groupby(&quot;md5&quot;)[&quot;split&quot;].nunique()
+same_content_across_splits = int((splits_per_copy &gt; 1).sum())
+print(&quot;identical pictures found in more than one split:&quot;, same_content_across_splits)
+print(&quot;Content check:&quot;, &quot;OK&quot; if same_content_across_splits == 0 else &quot;NOT OK, look at these files&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2</td>
+<td>For every one of the 27,000 files, reads all its bytes and computes an MD5 hex string.</td>
+<td>MD5 hash, fingerprint</td>
+<td>The file name check in <code>check_split</code> cannot see two copies saved under different names. The fingerprint can. Reading bytes is slow but takes a short time for 27,000 small JPEGs.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>For each fingerprint, counts how many different splits it appears in.</td>
+<td><code>groupby</code>, <code>nunique</code></td>
+<td>If an MD5 appears in two splits, the same picture is in two splits.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Counts the fingerprints that appear in more than one split.</td>
+<td>Leakage count</td>
+<td>The result must be 0.</td>
+</tr>
+<tr>
+<td>6 to 7</td>
+<td>Prints the count and <code>Content check: OK</code> when it is 0.</td>
+<td>Output</td>
+<td>The notebook shows <code>identical pictures found in more than one split: 0</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Limit of this check: it finds identical bytes only. Two JPEG files with the same picture but a different encoding would have different MD5s. It also cannot see that two different tiles overlap or come from the same large scene. That is why the markdown says it "does not rule out neighbouring patches".</p>
+<h3>2.4 Cell 8: class counts bar chart (section 2 of the notebook)</h3>
+<pre><code class="language-python">class_counts = df[&quot;class_name&quot;].value_counts().reindex(class_names)
+
+fig, ax = plt.subplots(figsize=(9, 4))
+ax.bar(class_names, class_counts)
+ax.set_ylabel(&quot;number of images&quot;)
+ax.set_title(&quot;Images per class (all 27,000)&quot;)
+plt.setp(ax.get_xticklabels(), rotation=40, ha=&quot;right&quot;)
+fig.tight_layout()
+fig.savefig(FIGURES_DIR / &quot;eda_class_counts.png&quot;, dpi=120)
+plt.show()
+print(class_counts.to_string())
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Counts images per class and puts them in sorted class order.</td>
+<td>Class count</td>
+<td>The bar order matches the other plots.</td>
+</tr>
+<tr>
+<td>3 to 4</td>
+<td>Creates a figure 9 by 4 inches with one axis.</td>
+<td>matplotlib</td>
+<td>Standard single-plot setup.</td>
+</tr>
+<tr>
+<td>5 to 6</td>
+<td>Draws the bars and labels the y-axis and title.</td>
+<td>Bar chart</td>
+<td>A bar chart is the simplest way to show imbalance.</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Turns the class names on the x-axis by 40 degrees so they fit.</td>
+<td>Layout</td>
+<td>Long names like HerbaceousVegetation would overlap otherwise.</td>
+</tr>
+<tr>
+<td>8 to 9</td>
+<td>Fits the layout, saves the PNG at 120 dpi, and shows it.</td>
+<td>Figure output</td>
+<td>Saved for the report (<code>eda_class_counts.png</code>).</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Prints the counts as text.</td>
+<td>Numbers</td>
+<td>The text version is what the markdown cites.</td>
+</tr>
+</tbody>
+</table>
+<p>Reading: five classes have 3,000 images, four have 2,500, Pasture has 2,000. The ratio is 1.5 to 1 at most.</p>
+<h3>2.5 Cell 11: five sample images per class</h3>
+<pre><code class="language-python">fig, axes = plt.subplots(len(class_names), 5, figsize=(7, 14))
+for row, name in enumerate(class_names):
+    samples = train[train[&quot;class_name&quot;] == name].sample(5, random_state=42)
+    for col, path in enumerate(samples[&quot;path&quot;]):
+        axes[row, col].imshow(Image.open(DATA_DIR / path))
+        axes[row, col].set_xticks([])
+        axes[row, col].set_yticks([])
+    axes[row, 0].set_ylabel(name, rotation=0, ha=&quot;right&quot;, va=&quot;center&quot;, fontsize=9)
+fig.tight_layout()
+fig.savefig(FIGURES_DIR / &quot;eda_samples.png&quot;, dpi=120)
+plt.show()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Makes a grid with 10 rows (one per class) and 5 columns.</td>
+<td>Grid of subplots</td>
+<td>Shows five examples of every class at once.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Loops over the classes.</td>
+<td>Loop</td>
+<td>Each row is one class.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Picks 5 random train images of this class with <code>random_state=42</code>.</td>
+<td>Fixed random sample</td>
+<td>The seed means the same five images every time, and they are chosen by chance, not by hand.</td>
+</tr>
+<tr>
+<td>5 to 6</td>
+<td>Opens each image and draws it in its cell.</td>
+<td>Image display</td>
+<td>Shows the real 64 x 64 tiles.</td>
+</tr>
+<tr>
+<td>7 to 8</td>
+<td>Hides the tick marks.</td>
+<td>Clean display</td>
+<td>Ticks would only add noise to an image.</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Writes the class name on the left of each row.</td>
+<td>Label</td>
+<td>Lets the reader match rows to classes.</td>
+</tr>
+<tr>
+<td>10 to 12</td>
+<td>Fits the layout, saves <code>eda_samples.png</code> and shows it.</td>
+<td>Output</td>
+<td>Figure for the report.</td>
+</tr>
+</tbody>
+</table>
+<p>Reading: Forest and SeaLake are smooth and dark. Industrial and Residential have many small bright details. Highway tiles contain fields and buildings too, so one tile can hold more than its label says.</p>
+<h3>2.6 Cell 14: per-class mean colour (section 4 of the notebook)</h3>
+<pre><code class="language-python"># Count how many pixels have each value 0..255, per class and per colour channel.
+# We keep these counts for the mean colour here and the histograms in section 5.
+hist = {name: np.zeros((3, 256), dtype=np.int64) for name in class_names}
+for path, name in zip(train[&quot;path&quot;], train[&quot;class_name&quot;]):
+    pixels = np.asarray(Image.open(DATA_DIR / path).convert(&quot;RGB&quot;))
+    for channel in range(3):
+        hist[name][channel] += np.bincount(pixels[:, :, channel].ravel(), minlength=256)
+
+values = np.arange(256)
+mean_colour = pd.DataFrame(
+    {name: (hist[name] * values).sum(axis=1) / hist[name].sum(axis=1) for name in class_names},
+    index=[&quot;R&quot;, &quot;G&quot;, &quot;B&quot;]).T
+
+fig, ax = plt.subplots(figsize=(9, 3))
+ax.imshow([mean_colour.to_numpy() / 255], aspect=&quot;auto&quot;)
+ax.set_xticks(range(len(class_names)), class_names, rotation=40, ha=&quot;right&quot;)
+ax.set_yticks([])
+ax.set_title(&quot;Mean colour of each class (train images, true scale)&quot;)
+fig.tight_layout()
+fig.savefig(FIGURES_DIR / &quot;eda_mean_colour.png&quot;, dpi=120)
+plt.show()
+mean_colour.round(1)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>4</td>
+<td>Makes one array of 3 x 256 zeros per class. Row 0 is red, row 1 green, row 2 blue. Each column is a pixel value 0 to 255.</td>
+<td>Histogram, per-channel</td>
+<td>The counts can be added up across images without keeping the pixels.</td>
+</tr>
+<tr>
+<td>5 to 7</td>
+<td>For each train image, opens it and, for each of the three channels, adds a count of each pixel value.</td>
+<td><code>np.bincount</code>, per-channel histogram</td>
+<td>Counting is much lighter on memory than storing 18,900 images. <code>ravel()</code> flattens the 64 x 64 channel to one line of numbers.</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Makes the array <code>0, 1, ..., 255</code>.</td>
+<td>Weights</td>
+<td>Used to turn counts into a sum of values.</td>
+</tr>
+<tr>
+<td>11 to 13</td>
+<td>Mean per channel: (count times value), summed over 0 to 255, divided by the total count. Put into a table with rows = classes and columns R, G, B.</td>
+<td>Mean colour</td>
+<td>This is the average pixel value per channel. It is exact, because it uses all pixels of all train images.</td>
+</tr>
+<tr>
+<td>15 to 16</td>
+<td>Makes a wide, short figure.</td>
+<td>Figure</td>
+<td>One strip of colours.</td>
+</tr>
+<tr>
+<td>17</td>
+<td>Draws the mean colours as a single image strip, divided by 255 so the values are between 0 and 1.</td>
+<td>Colour display</td>
+<td>Shows the colours at true scale, so the reader sees how dark or bright each class is.</td>
+</tr>
+<tr>
+<td>18 to 21</td>
+<td>Puts class names on the x-axis, removes the y-ticks, sets the title, saves and shows the figure.</td>
+<td>Output</td>
+<td>Saved as <code>eda_mean_colour.png</code>.</td>
+</tr>
+<tr>
+<td>22</td>
+<td>Displays the table, rounded to one decimal.</td>
+<td>Numbers</td>
+<td>This is the table quoted in the report.</td>
+</tr>
+</tbody>
+</table>
+<p>Reading: Forest (39.4, 64.5, 75.9) is darkest and Industrial (123.4, 125.5, 134.4) brightest. AnnualCrop and PermanentCrop are close, and Pasture and River are close. Colour alone cannot separate all classes.</p>
+<h3>2.7 Cell 17: per-channel histograms and percentiles (section 5 of the notebook)</h3>
+<pre><code class="language-python">fig, axes = plt.subplots(2, 5, figsize=(14, 5), sharex=True, sharey=True)
+for ax, name in zip(axes.ravel(), class_names):
+    for channel, colour in enumerate([&quot;red&quot;, &quot;green&quot;, &quot;blue&quot;]):
+        share = hist[name][channel] / hist[name][channel].sum()
+        ax.plot(values, share, color=colour, linewidth=1)
+    ax.set_title(name, fontsize=10)
+for ax in axes[1]:
+    ax.set_xlabel(&quot;pixel value&quot;)
+for ax in axes[:, 0]:
+    ax.set_ylabel(&quot;share of pixels&quot;)
+axes[0, 0].set_ylim(0, 0.08)  # SeaLake and Forest have tall peaks; the same scale keeps classes comparable
+fig.tight_layout()
+fig.savefig(FIGURES_DIR / &quot;eda_histograms.png&quot;, dpi=120)
+plt.show()
+
+# Numbers to back up what we read from the plot: the middle value and the spread of each class.
+rows = {}
+for name in class_names:
+    grey = hist[name].sum(axis=0)
+    cumulative = np.cumsum(grey) / grey.sum()
+    rows[name] = {&quot;p5&quot;: int(np.searchsorted(cumulative, 0.05)),
+                  &quot;median&quot;: int(np.searchsorted(cumulative, 0.50)),
+                  &quot;p95&quot;: int(np.searchsorted(cumulative, 0.95))}
+pd.DataFrame(rows).T
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Makes a 2 by 5 grid, one small plot per class, all with the same axis scale.</td>
+<td>Shared axes</td>
+<td>Same scale lets the reader compare classes by eye.</td>
+</tr>
+<tr>
+<td>2 to 5</td>
+<td>For each class, draws three lines (red, green, blue). Each line is the share of pixels with that value.</td>
+<td>Normalised histogram</td>
+<td>Dividing by the total turns counts into shares, so classes with different numbers of pixels are comparable.</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Sets the title to the class name.</td>
+<td>Label</td>
+<td>Lets the reader read each plot.</td>
+</tr>
+<tr>
+<td>7 to 10</td>
+<td>Puts x-labels on the bottom row and y-labels on the first column.</td>
+<td>Layout</td>
+<td>Less clutter than labelling every plot.</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Limits the y-axis to 0 to 0.08.</td>
+<td>Scale choice</td>
+<td>SeaLake and Forest have tall peaks. The limit keeps the others readable. Peaks above the limit are cut off in the plot, which is a known trade-off.</td>
+</tr>
+<tr>
+<td>12 to 14</td>
+<td>Fits the layout, saves <code>eda_histograms.png</code>, shows it.</td>
+<td>Output</td>
+<td>Figure for the report.</td>
+</tr>
+<tr>
+<td>18 to 19</td>
+<td>Adds the three channel histograms for one class into one grey histogram.</td>
+<td>Pooled histogram</td>
+<td>The percentiles use all channels together, so one number describes the brightness of the class.</td>
+</tr>
+<tr>
+<td>20</td>
+<td>Turns the counts into a cumulative share from 0 to 1.</td>
+<td>Cumulative distribution</td>
+<td>The value where the cumulative share reaches 0.05 is the 5th percentile.</td>
+</tr>
+<tr>
+<td>21 to 23</td>
+<td>Finds the first pixel value where the cumulative share reaches 0.05, 0.50 and 0.95.</td>
+<td><code>searchsorted</code>, percentile</td>
+<td>These are the 5th percentile, median and 95th percentile. They turn the plot into numbers.</td>
+</tr>
+<tr>
+<td>24</td>
+<td>Shows the table with one row per class.</td>
+<td>Numbers</td>
+<td>Output in the notebook.</td>
+</tr>
+</tbody>
+</table>
+<p>Reading: Forest's 5% to 95% range is 33 to 84. AnnualCrop is 60 to 202, Industrial 66 to 243. AnnualCrop and Industrial show a spike at 255 (clipping). SeaLake has the lowest 5th percentile (24). In most classes red is lower than green and blue.</p>
+<h3>2.8 Cell 20: augmentation demo and exact-pixel check (section 6 of the notebook)</h3>
+<pre><code class="language-python">image = Image.open(DATA_DIR / train[train[&quot;class_name&quot;] == &quot;Highway&quot;][&quot;path&quot;].iloc[0]).convert(&quot;RGB&quot;)
+transform = augment()
+
+fig, axes = plt.subplots(1, 8, figsize=(12, 1.8))
+for ax in axes:
+    ax.imshow(transform(image))
+    ax.axis(&quot;off&quot;)
+fig.savefig(FIGURES_DIR / &quot;eda_augment.png&quot;, dpi=120, bbox_inches=&quot;tight&quot;)
+plt.show()
+
+# A rotation or flip only moves pixels, it must not change any value.
+original = np.sort(np.asarray(image).ravel())
+same_pixels = all(np.array_equal(original, np.sort(np.asarray(transform(image)).ravel())) for _ in range(50))
+print(&quot;augment keeps the exact pixel values:&quot;, same_pixels)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Opens the first Highway image in the train split.</td>
+<td>Fixed example</td>
+<td>Always the same image, so the figure is repeatable.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Builds the augmentation pipeline from <code>augment()</code>.</td>
+<td>Augmentation</td>
+<td>Same pipeline as training.</td>
+</tr>
+<tr>
+<td>4 to 8</td>
+<td>Draws eight random augmented versions of the image in a row.</td>
+<td>Visual check</td>
+<td>The reader can see the rotations and flips. Each run gives different random versions.</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Saves <code>eda_augment.png</code> with tight edges.</td>
+<td>Output</td>
+<td>Figure for the report.</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Sorts all pixel values of the original, so order does not matter.</td>
+<td>Value check</td>
+<td>Rotations and flips only move pixels, so the sorted list of values is the same.</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Repeats 50 random augmentations and checks that the sorted pixel values are identical every time.</td>
+<td>Exact check</td>
+<td><code>True</code> means no pixel was blurred, interpolated or lost.</td>
+</tr>
+<tr>
+<td>14</td>
+<td>Prints <code>augment keeps the exact pixel values: True</code>.</td>
+<td>Output</td>
+<td>Shown in the notebook.</td>
+</tr>
+</tbody>
+</table>
+<h3>2.9 Cell 21: loader check and fraction sizes</h3>
+<pre><code class="language-python">images, labels = next(iter(get_loader(&quot;train&quot;, seed=0, augment=True)))
+print(&quot;batch:&quot;, images.shape, labels.shape)
+print(&quot;mean after normalising:&quot;, round(images.mean().item(), 3), &quot; std:&quot;, round(images.std().item(), 3))
+
+for fraction in [0.05, 0.1, 0.25, 0.5, 1.0]:
+    subset = get_loader(&quot;train&quot;, fraction=fraction, seed=0).dataset.df
+    print(f&quot;fraction {fraction:&lt;5} {len(subset):&gt;6} images, smallest class {subset['label'].value_counts().min()}&quot;)
+
+print(&quot;val:&quot;, len(get_loader(&quot;val&quot;).dataset), &quot; test:&quot;, len(get_loader(&quot;test&quot;).dataset))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Builds the train DataLoader with augmentation and takes its first batch.</td>
+<td>DataLoader, iterator</td>
+<td>Shows exactly what the first training step receives.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Prints the shapes: images <code>[64, 3, 64, 64]</code> and labels <code>[64]</code>.</td>
+<td>Batch shape</td>
+<td>Batch of 64, 3 channels, 64 x 64 pixels.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Prints the mean and std of this batch after normalisation.</td>
+<td>Normalisation check</td>
+<td>Output: mean -0.161 and std 0.833. Not 0 and 1, because the ImageNet numbers were not computed on EuroSAT. This is a known and accepted difference.</td>
+</tr>
+<tr>
+<td>5 to 7</td>
+<td>For five fractions, builds the loader and prints how many train images are kept and the size of the smallest class.</td>
+<td>Stratified subset</td>
+<td>Shows that stratifying keeps every class. At 5% the smallest class still has 70 images.</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Prints the sizes of val and test.</td>
+<td>Fixed sizes</td>
+<td>Output: val 4050, test 4050.</td>
+</tr>
+</tbody>
+</table>
+<p>Note that the loop builds a full DataLoader for every fraction, which is a little wasteful but harmless for this check.</p>
+<hr />
+<h2>3. The figures in results/figures (eda_*)</h2>
+<p>Five figures come from my notebook. The other PNG files in that folder belong to other parts (scratch CNN, transfer learning, Grad-CAM, confusion matrices and data efficiency).</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>What it shows</th>
+<th>How it was made</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>eda_class_counts.png</code></td>
+<td>Bar chart of the number of images per class (all 27,000). Shows the mild imbalance: 3,000 for five classes, 2,500 for four, 2,000 for Pasture.</td>
+<td>Notebook cell 8</td>
+</tr>
+<tr>
+<td><code>eda_samples.png</code></td>
+<td>A 10 by 5 grid: five random train tiles per class, with the class name on the left. Shows the look of each class and that one tile can contain more than its label.</td>
+<td>Notebook cell 11</td>
+</tr>
+<tr>
+<td><code>eda_mean_colour.png</code></td>
+<td>One strip of ten colour blocks, one per class, showing the mean red, green and blue of the train tiles at true scale. Forest is the darkest, Industrial the brightest.</td>
+<td>Notebook cell 14</td>
+</tr>
+<tr>
+<td><code>eda_histograms.png</code></td>
+<td>A 2 by 5 grid of per-channel histograms (red, green, blue lines) for each class, with the same y-scale up to 0.08. Shows how narrow or wide the brightness spread is, and the spike at 255 for AnnualCrop and Industrial.</td>
+<td>Notebook cell 17</td>
+</tr>
+<tr>
+<td><code>eda_augment.png</code></td>
+<td>Eight random augmented versions of one Highway tile in a row. Shows that rotations and flips keep the road recognisable.</td>
+<td>Notebook cell 20</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>4. data/splits.csv</h2>
+<h3>4.1 Columns and head</h3>
+<p>The file has four columns:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>path</code></td>
+<td>The image path from the data folder, always with <code>/</code>, for example <code>eurosat/2750/AnnualCrop/AnnualCrop_1.jpg</code>.</td>
+</tr>
+<tr>
+<td><code>label</code></td>
+<td>The class number, 0 to 9, in alphabetical class order.</td>
+</tr>
+<tr>
+<td><code>class_name</code></td>
+<td>The class name, for example <code>AnnualCrop</code>.</td>
+</tr>
+<tr>
+<td><code>split</code></td>
+<td><code>train</code>, <code>val</code> or <code>test</code>. Each row has exactly one value.</td>
+</tr>
+</tbody>
+</table>
+<p>The first rows (after the header) look like this:</p>
+<pre><code>path,label,class_name,split
+eurosat/2750/AnnualCrop/AnnualCrop_1.jpg,0,AnnualCrop,train
+eurosat/2750/AnnualCrop/AnnualCrop_10.jpg,0,AnnualCrop,val
+eurosat/2750/AnnualCrop/AnnualCrop_100.jpg,0,AnnualCrop,train
+</code></pre>
+<h3>4.2 Counts</h3>
+<p>The file has 27,000 data rows plus the header. Counted from the file: train 18,900, val 4,050, test 4,050. There are 27,000 unique paths, so no file is listed twice.</p>
+<p>Line endings: the code asks for <code>\n</code> (Unix line endings), but on this laptop the file on disk has <code>\r\n</code>. The repository has <code>core.autocrlf</code> set to <code>true</code>, which converts line endings when files are checked out on Windows. This is most likely the reason; it is a harmless difference, but it is worth knowing if someone sees a "changed" file in git after a fresh clone.</p>
+<hr />
+<h2>5. How the split is made, step by step</h2>
+<p>Command: <code>python -m src.dataset</code> (run once, from the repo folder, with the venv on). It runs <code>check_split(make_split())</code>.</p>
+<ol>
+<li>The code opens the EuroSAT RGB data from <code>data/eurosat/2750</code> with <code>download=False</code>. torchvision finds 27,000 <code>(path, label)</code> pairs and 10 class names.</li>
+<li>A table is built with one row per image: <code>path</code> (relative, with <code>/</code>), <code>label</code> (0 to 9) and <code>class_name</code>.</li>
+<li>First cut with <code>train_test_split(..., train_size=0.7, stratify=label, random_state=42)</code>: about 70% of the rows go to train (18,900) and the other 30% to the rest (8,100).</li>
+<li>Second cut with <code>train_test_split(rest, train_size=0.5, stratify=label of rest, random_state=42)</code>: the rest is cut in half. Each half gets 4,050 rows: validation and test.</li>
+<li>Each row gets its <code>split</code> value (<code>train</code>, <code>val</code> or <code>test</code>).</li>
+<li>The table is saved to <code>data/splits.csv</code>, with no index column.</li>
+<li><code>check_split</code> runs and prints:
+   - <code>Leakage check: OK</code>
+   - <code>split sizes: {'train': 18900, 'val': 4050, 'test': 4050}</code>
+   - <code>no file appears in two splits; every class keeps its share in every split</code></li>
+<li>The notebook repeats this check (cell 3) and prints the crosstab of classes by split (section 8).</li>
+</ol>
+<p>Because the seed is fixed at 42, running the cut again on the same data gives the same file. This was checked in the work (the split was made twice and the file was the same both times).</p>
+<hr />
+<h2>6. Why the split must be fixed and how we prove no leakage</h2>
+<p><strong>Why it must be fixed.</strong> Every model in the team must be trained on the same train images and scored on the same test images. Otherwise a higher score could come from an easier test set, not a better model. A fixed split, saved in a file that everybody commits, makes the scores comparable. A random split made fresh on each laptop would give five different test sets. The seed (42) and the saved CSV make the split fixed. The CSV is the real source of truth: the code only reads it after the first run.</p>
+<p><strong>Why stratified.</strong> The classes have different sizes (2,000 to 3,000). A plain random split could put most of one class into train by chance. Stratifying makes each class keep the same 70/15/15 share in every part. This matters most in the data-efficiency study, where at 5% the smallest class has only 70 train images.</p>
+<p><strong>How we prove there is no leakage.</strong> The checks are:</p>
+<ol>
+<li><strong>Sizes.</strong> <code>check_split</code> asserts that the split sizes are exactly 18,900, 4,050 and 4,050. Any other number stops the program.</li>
+<li><strong>Unique file names.</strong> <code>check_split</code> asserts that every <code>path</code> appears once. A file cannot be in two splits if it appears only once.</li>
+<li><strong>Stratification.</strong> <code>check_split</code> builds the class-by-split table and checks that every count is within 1 of the exact expected count. In our data the expected counts are whole numbers, so all counts are exact (for example AnnualCrop has 2,100 / 450 / 450, and Pasture has 1,400 / 300 / 300).</li>
+<li><strong>Identical content (MD5).</strong> Notebook cell 5 reads all 27,000 files, computes an MD5 for each and counts the MD5 values that appear in more than one split. The result is 0, so no byte-identical picture is in two splits, even under a different file name.</li>
+</ol>
+<p>What the checks do not prove: they do not find neighbouring tiles. EuroSAT tiles are cut from larger scenes, so two tiles from the same area can be in train and test. They look alike, so a model may score higher than on a truly new area. A random split cannot prevent this. The fix would be a split by geographic area, which needs the location of each tile, and EuroSAT does not give that to us in this file. This is stated as a limitation in the report.</p>
+<hr />
+<h2>7. Why rotations and flips are safe here, and why the test set is never touched</h2>
+<h3>7.1 Rotations and flips</h3>
+<p>A satellite image is taken looking straight down. There is no "up", no sky, and no fixed direction for roads or fields. A field rotated 90 degrees is still a field, and a river flipped left-right is still a river. So the class label does not change. This is why these transforms are label-safe for EuroSAT.</p>
+<p>They are also exact. The rotations use only 0, 90, 180 and 270 degrees. A rotation by any other angle would need interpolation, which mixes neighbouring pixels and leaves empty corners. Right-angle moves only change where pixels are; no value is created or lost. Notebook cell 20 checks this: the sorted pixel values of the image are identical after 50 random augmentations.</p>
+<p>Together the rotations and the two flips give all 8 orientations of a square tile. The model sees more variety without any new images.</p>
+<p><strong>Why this would not work for digits.</strong> A handwritten "6" rotated 180 degrees looks like a "9", and a flipped "2" or "5" is not the same digit. The label would change, so rotations and flips are not label-safe for digits. For satellite tiles there is no such confusion, because the class depends on the land cover, not on the direction of the picture.</p>
+<p><strong>Why only on training images.</strong> Augmentation adds variety for learning. Validation and test must stay as they are, so that every model is scored on the same pictures. The code enforces this in two ways: <code>make_transform(use_augment=False)</code> is the default in <code>EuroSATDataset</code>, and <code>get_loader</code> raises an error if someone asks for augmentation on val or test.</p>
+<h3>7.2 Why the test set is never touched</h3>
+<p>The test set is the only honest estimate of how the model will do on new images. It must be used once, at the end, for the final score. If we looked at it while making choices (which model, which learning rate, when to stop), the choices would be tuned to it, and the final score would be too optimistic. This is leakage of a different kind: the test set leaks into the decisions.</p>
+<p>In our code and notebook this is handled by four rules:</p>
+<ol>
+<li>The EDA (colours, histograms, percentiles) uses train images only (cell 14 and cell 17 read <code>train</code>, not the whole <code>df</code>). The class counts (cell 8) and the leakage checks are about the whole table, but they look only at file names and sizes, not at pixel values, and they are needed to prove the split.</li>
+<li>Decisions are made on the validation set. Only the training split is shuffled and augmented.</li>
+<li><code>get_loader</code> refuses <code>fraction</code> or <code>augment</code> on val or test, so the val and test sets cannot be changed by a setting.</li>
+<li>The test set is used only in the final evaluation, which is in another part of the project.</li>
+</ol>
+<hr />
+<h2>8. Numbers you must know</h2>
+<p><strong>Dataset.</strong> EuroSAT RGB: 27,000 tiles, 64 x 64 pixels, 3 colour channels, 10 classes. Sentinel-2 satellite, 10 metres per pixel (from the report's dataset section).</p>
+<p><strong>Class counts (whole dataset, and split by 70/15/15).</strong></p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th style="text-align: right;">Total</th>
+<th style="text-align: right;">Train</th>
+<th style="text-align: right;">Val</th>
+<th style="text-align: right;">Test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AnnualCrop</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>Forest</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>HerbaceousVegetation</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>Highway</td>
+<td style="text-align: right;">2,500</td>
+<td style="text-align: right;">1,750</td>
+<td style="text-align: right;">375</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>Industrial</td>
+<td style="text-align: right;">2,500</td>
+<td style="text-align: right;">1,750</td>
+<td style="text-align: right;">375</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>Pasture</td>
+<td style="text-align: right;">2,000</td>
+<td style="text-align: right;">1,400</td>
+<td style="text-align: right;">300</td>
+<td style="text-align: right;">300</td>
+</tr>
+<tr>
+<td>PermanentCrop</td>
+<td style="text-align: right;">2,500</td>
+<td style="text-align: right;">1,750</td>
+<td style="text-align: right;">375</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>Residential</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>River</td>
+<td style="text-align: right;">2,500</td>
+<td style="text-align: right;">1,750</td>
+<td style="text-align: right;">375</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>SeaLake</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td style="text-align: right;"><strong>27,000</strong></td>
+<td style="text-align: right;"><strong>18,900</strong></td>
+<td style="text-align: right;"><strong>4,050</strong></td>
+<td style="text-align: right;"><strong>4,050</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Imbalance: 3,000 versus 2,000 is a ratio of 1.5 to 1.</p>
+<p><strong>Split sizes.</strong> 18,900 train, 4,050 validation, 4,050 test. Seed 42. Stratified twice.</p>
+<p><strong>Fractions of train used by the data-efficiency study (seed 0).</strong></p>
+<table>
+<thead>
+<tr>
+<th>Fraction</th>
+<th style="text-align: right;">Images</th>
+<th style="text-align: right;">Smallest class</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.05</td>
+<td style="text-align: right;">945</td>
+<td style="text-align: right;">70</td>
+</tr>
+<tr>
+<td>0.10</td>
+<td style="text-align: right;">1,890</td>
+<td style="text-align: right;">140</td>
+</tr>
+<tr>
+<td>0.25</td>
+<td style="text-align: right;">4,725</td>
+<td style="text-align: right;">350</td>
+</tr>
+<tr>
+<td>0.50</td>
+<td style="text-align: right;">9,450</td>
+<td style="text-align: right;">700</td>
+</tr>
+<tr>
+<td>1.00</td>
+<td style="text-align: right;">18,900</td>
+<td style="text-align: right;">1,400</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Loader.</strong> Batch size 64 by default. One batch shape: 64 x 3 x 64 x 64, labels 64.</p>
+<p><strong>Normalisation.</strong> ImageNet mean (0.485, 0.456, 0.406) and std (0.229, 0.224, 0.225). One augmented training batch after normalising: mean -0.161, std 0.833.</p>
+<p><strong>Leakage checks.</strong> 27,000 unique paths. MD5 duplicates across splits: 0.</p>
+<p><strong>Colour and brightness (train only).</strong></p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Mean R, G, B</th>
+<th>Pixel 5th to 95th percentile</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AnnualCrop</td>
+<td>129.6, 120.0, 117.2</td>
+<td>60 to 202</td>
+</tr>
+<tr>
+<td>Forest</td>
+<td>39.4, 64.5, 75.9</td>
+<td>33 to 84</td>
+</tr>
+<tr>
+<td>HerbaceousVegetation</td>
+<td>98.0, 98.6, 103.9</td>
+<td>57 to 158</td>
+</tr>
+<tr>
+<td>Highway</td>
+<td>87.8, 96.4, 103.3</td>
+<td>44 to 164</td>
+</tr>
+<tr>
+<td>Industrial</td>
+<td>123.4, 125.5, 134.4</td>
+<td>66 to 243</td>
+</tr>
+<tr>
+<td>Pasture</td>
+<td>62.2, 88.4, 94.2</td>
+<td>43 to 127</td>
+</tr>
+<tr>
+<td>PermanentCrop</td>
+<td>122.1, 115.9, 113.9</td>
+<td>68 to 188</td>
+</tr>
+<tr>
+<td>Residential</td>
+<td>99.3, 103.3, 112.7</td>
+<td>62 to 170</td>
+</tr>
+<tr>
+<td>River</td>
+<td>66.9, 86.6, 96.9</td>
+<td>40 to 135</td>
+</tr>
+<tr>
+<td>SeaLake</td>
+<td>48.0, 72.9, 89.2</td>
+<td>24 to 120</td>
+</tr>
+</tbody>
+</table>
+<p>Pairs that look alike in colour: AnnualCrop and PermanentCrop; Pasture and River.</p>
+<p><strong>Augmentation.</strong> 4 rotations (0, 90, 180, 270 degrees) times 2 flips gives 8 orientations.</p>
+<hr />
+<h2>9. Honest notes and open points</h2>
+<ul>
+<li>The <code>augment</code> name is used for both a function and a parameter of <code>get_loader</code>. It works, but it is confusing.</li>
+<li>Augmentation randomness is not controlled by the <code>seed</code> argument of <code>get_loader</code>. It depends on the global PyTorch seed (set by <code>set_seed</code> in <code>src/utils.py</code>). A run is repeatable only if that is set as well.</li>
+<li>The leakage check in <code>check_split</code> compares file names and counts. The byte-level check is in the notebook, not in the code. A teammate who runs only <code>python -m src.dataset</code> does not get the MD5 check.</li>
+<li>The 1-image tolerance in <code>check_split</code> is more lenient than needed for this data, where every count is exact.</li>
+<li>The notebook was run on Python 3.13 (metadata in the notebook), while the team standard is Python 3.12. The code should behave the same, but this was not tested on 3.12.</li>
+<li>Neighbouring-tile leakage is not checked and cannot be removed with a random split. It is a stated limitation.</li>
+</ul></body></html>
