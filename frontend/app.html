@@ -37,7 +37,22 @@ select{margin-left:auto;padding:8px 12px;border:1px solid var(--ink);border-radi
 #cam{opacity:.6;mix-blend-mode:normal}.cue{margin:14px 0 0;font:italic 18px/1.5 Georgia,serif;color:var(--mute)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:20px;margin-bottom:28px}.stats .card b{display:block;font:400 44px Georgia,serif}.stats .card span{color:var(--mute);font-size:14px}
 .cm{display:grid;grid-template-columns:30px repeat(10,1fr);gap:2px;font-size:11px;text-align:center}.cm i{aspect-ratio:1;border-radius:3px;animation:pop .5s backwards;cursor:default}.cm em{font-style:normal;color:var(--mute);align-self:center}
-svg.ch{width:100%;height:auto}.ch .l{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;animation:dr 1.6s var(--ease) forwards}@keyframes dr{to{stroke-dashoffset:0}}.ch text{font:12px Arial;fill:var(--mute)}
+.ptbl{width:100%;border-collapse:collapse;font-size:12px;margin-top:14px}.ptbl th,.ptbl td{padding:4px 6px;text-align:right;border-bottom:1px solid rgba(25,0,25,.12)}.ptbl th{color:var(--mute);font-weight:normal;font-size:11px}.ptbl td:first-child,.ptbl th:first-child{text-align:left;font-variant:small-caps}
+.ptbl tr.low td{background:rgba(133,79,108,.14)}
+.errs{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:14px;margin-top:14px}
+.ert{text-align:center;font-size:12px}.ert img{width:100%;aspect-ratio:1;image-rendering:pixelated;border:1px solid var(--ink);border-radius:8px;transition:transform .2s var(--ease)}.ert:hover img{transform:scale(1.06) rotate(-2deg)}.ert b{display:block;margin-top:6px}.ert b s{text-decoration:none;color:var(--red)}.ert span{color:var(--mute)}
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:28px;margin-top:28px}.strip figure{margin:0}.strip img{width:100%;border:1px solid var(--ink);border-radius:8px;display:block}.strip figcaption{font-size:13px;color:var(--mute);margin-top:8px}.strip figcaption b{color:var(--ink);font-weight:bold}
+.chip{font-size:13px;padding:3px 12px;border-radius:99px;background:var(--sun);border:1px solid rgba(25,0,25,.35);color:var(--ink);white-space:nowrap}
+.macc{font-size:13px;color:var(--mute);background:var(--sun);border:1px solid var(--red);padding:3px 12px;border-radius:99px}
+.lat{color:var(--mute);font-size:13px}.lat b{font-size:17px;color:var(--ink)}
+.cbtn{margin-top:14px;padding:8px 18px;border:1px solid var(--ink);border-radius:99px;background:var(--sun);font:inherit;cursor:pointer;transition:transform .15s var(--ease)}
+.cbtn:hover{transform:translateY(-2px)}.cbtn[disabled]{opacity:.45;cursor:progress}
+.crs{display:grid;gap:8px;margin-top:12px}
+.cr{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:center;border:1px solid rgba(25,0,25,.25);border-radius:10px;padding:6px 10px;font-size:13px;animation:pop .4s var(--ease) backwards}
+.cr img{width:40px;height:40px;border-radius:6px;border:1px solid var(--ink);image-rendering:pixelated}
+.cr b{font-size:14px}.cr .dis{color:#a33c3c}.cr .agr{color:var(--mute)}
+.crtrack{position:relative;height:6px;border-radius:3px;background:var(--sun);margin-top:3px}.crtrack i{position:absolute;inset:0;border-radius:3px;background:var(--red)}
+svg.ch{width:100%;height:auto}.ch .l{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;animation:dr 1.6s var(--ease) forwards}@keyframes dr{to{stroke-dashoffset:0}}.ch .ls{fill:none;stroke-width:1.5;opacity:.45;stroke-linecap:round}.ch text{font:12px Arial;fill:var(--mute)}
 .note{font-size:13px;color:var(--mute);margin-top:14px}.err{color:var(--red);font-size:14px}
 .foot{max-width:1080px;margin:0 auto;padding:0 clamp(16px,4vw,32px) 44px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;font-size:13px;color:var(--mute)}
 .foot a{color:var(--ink);text-underline-offset:3px;text-decoration-color:var(--red)}
@@ -47,43 +62,60 @@ svg.ch{width:100%;height:auto}.ch .l{fill:none;stroke-width:3;stroke-linecap:rou
 <main>
 <section id="v1"><h1>Classify a satellite patch</h1><p class="sub">Drop a Sentinel-2 image patch. The model names the land use and shows which pixels drove its decision.</p>
 <div class="grid"><div class="card"><div id="drop" tabindex="0" role="button" aria-label="Upload an image"><input type="file" id="file" accept="image/*"><b class="scan"></b><img id="pv" alt="Uploaded patch"><div class="hint" id="hint">Drop an image here<small>or click, or paste from clipboard</small></div></div>
-<div class="row"><span>Try one:</span><span id="smp"></span><select id="mdl" aria-label="Model"></select></div><p class="err" id="err"></p></div>
+<div class="row"><span>Try one:</span><span id="smp"></span><select id="mdl" aria-label="Model"></select><b class="macc" id="macc" hidden></b></div><p class="err" id="err"></p></div>
 <div class="card"><div class="empty" id="emp"><div><svg viewBox="-100 -48 200 96"><path d="M-78,-14L-24,-12V12L-78,14ZM78,-14L24,-12V12L78,14Z" fill="#DFB6B2" stroke="#190019" stroke-width="5" stroke-linejoin="round"/><rect x="-18" y="-14" width="36" height="30" fill="#854F6C" stroke="#190019" stroke-width="5"/><path d="M0,-14V-42" stroke="#190019" stroke-width="5"/></svg><p class="hint">Waiting for a patch…</p></div></div>
-<div id="res"><div class="big"><div class="ringw"><svg class="ring" viewBox="0 0 80 80"><circle class="bg" cx="40" cy="40" r="34"/><circle class="fg" id="rg" cx="40" cy="40" r="34" stroke-dashoffset="213.6"/></svg><b id="cf"></b></div><div><h2 id="lb"></h2><p>predicted land-use class</p></div></div>
+<div id="res"><div class="big"><div class="ringw"><svg class="ring" viewBox="0 0 80 80"><circle class="bg" cx="40" cy="40" r="34"/><circle class="fg" id="rg" cx="40" cy="40" r="34" stroke-dashoffset="213.6"/></svg><b id="cf"></b></div><div><h2 id="lb"></h2><p>predicted land-use class</p><p class="lat"><b id="ms"></b> ms on CPU, incl. heat-map</p></div></div>
 <div class="bars" id="bars"></div><div class="row" style="margin:0 0 12px"><b>Grad-CAM</b><span>heat-map strength</span><input type="range" id="op" min="0" max="100" value="60" aria-label="Heat-map strength"></div>
-<div class="cam"><img id="cb" alt=""><img id="cam" alt="Grad-CAM heat map"></div><p class="cue" id="cue"></p></div></div></div></section>
-<section id="v2" hidden><h1>Model results</h1><p class="sub">Test-set performance and the data-efficiency study.</p><div class="stats"><div class="card"><b id="ac"></b><span>test accuracy</span></div><div class="card"><b id="f1"></b><span>macro-F1</span></div></div>
-<div class="grid"><div class="card"><h3 style="margin:0 0 12px;font:400 24px Georgia,serif">Confusion matrix</h3><div class="cm" id="cm"></div><p class="note">Rows are the truth, columns the prediction. Blue is correct, red is a mistake.</p></div>
-<div class="card"><h3 style="margin:0 0 12px;font:400 24px Georgia,serif">Accuracy vs training data</h3><svg class="ch" id="ch" viewBox="0 0 560 320"></svg><p class="note" id="mn"></p></div></div></section>
+<div class="cam"><img id="cb" alt=""><img id="cam" alt="Grad-CAM heat map"></div><p class="cue" id="cue"></p>
+<button class="cbtn" id="cmp" hidden>Compare all models on this patch</button><div class="crs" id="crs"></div></div></div></div></section>
+<section id="v2" hidden><h1>Model results</h1><p class="sub">Test-set performance, per-class metrics, the data-efficiency study, the model's real mistakes and a deeper look at what it learned.</p><div class="stats"><div class="card"><b id="ac"></b><span>test accuracy</span></div><div class="card"><b id="f1"></b><span>macro-F1</span></div></div>
+<div class="grid"><div class="card"><h3 style="margin:0 0 12px;font:400 24px Georgia,serif">Confusion matrix</h3><div class="cm" id="cm"></div><p class="note">Rows are the truth, columns the prediction. Blue is correct, red is a mistake.</p>
+<table class="ptbl" id="ptbl" hidden><thead><tr><th>class</th><th>precision</th><th>recall</th><th>F1</th><th>support</th></tr></thead><tbody id="ptb"></tbody></table><p class="note" id="ptn" hidden>Highlighted rows are the two weakest classes — they pair with the confusions below.</p></div>
+<div class="card"><h3 style="margin:0 0 12px;font:400 24px Georgia,serif">Accuracy vs training data</h3><svg class="ch" id="ch" viewBox="0 0 560 320"></svg><p class="note" id="mn"></p></div></div>
+<div class="card" id="failcard" hidden><h3 style="margin:0 0 4px;font:400 24px Georgia,serif">Real patches the model got wrong</h3><p class="note">One example per most-confused pair, straight from the fixed test set.</p><div class="errs" id="errs"></div><p class="note" id="errsnote"></p></div>
+<div class="strip" id="strip" hidden><figure><img id="figcam" alt="Grad-CAM heat maps for each class"><figcaption><b>Grad-CAM, class by class.</b> Where the model looks when naming each land use — road lines for Highway, shorelines for River, repeating roof blocks for Residential.</figcaption></figure><figure><img id="ftsne" alt="t-SNE of learned feature embeddings"><figcaption><b>t-SNE of learned embeddings.</b> Test-set features coloured by class. Ten clusters form, and the touching clusters are exactly the pairs the model confuses.</figcaption></figure><figure><img id="fabl" alt="Scratch-CNN ablation comparison"><figcaption><b>Scratch-CNN ablations.</b> Depth, BatchNorm and dropout each removed or changed in controlled runs — these curves show the design choices the accuracy rests on.</figcaption></figure></div></section>
 </main>
 <footer class="foot"><a href="Eyes_in_the_Sky_landing.html">← Back to the story</a><span>Eyes in the Sky · Group 5</span></footer>
 <script>
 const CL=["AnnualCrop","Forest","HerbaceousVegetation","Highway","Industrial","Pasture","PermanentCrop","Residential","River","SeaLake"],AB=["AC","Fo","HV","Hw","In","Pa","PC","Re","Ri","SL"];
 const CUE=["Straight crop rows with bare soil between","Dark, dense canopy with no hard edges","Patchy, irregular green","A thin bright line, long and almost straight","Large flat roofs and car parks","Smooth, even light green","Regular rows of trees or vines","Small roofs repeated in tidy blocks","A winding dark ribbon with curved edges","Flat, even dark water"];
-const API=new URLSearchParams(location.search).get("api")||"",$=i=>document.getElementById(i),sleep=t=>new Promise(r=>setTimeout(r,t));let live=false,cur=null;
+const API=new URLSearchParams(location.search).get("api")||"",$=i=>document.getElementById(i),sleep=t=>new Promise(r=>setTimeout(r,t));let live=false,cur=null,MODELS=[];
 // ---- backend (see API.md) with demo fallback
 async function j(p,o){const r=await fetch(API+p,o);if(!r.ok)throw Error(r.status);return r.json()}
 async function init(){let m=[{id:"resnet18",label:"ResNet-18 (fine-tuned)"},{id:"scratch",label:"Scratch CNN"}];
  if(API)try{m=(await j("/api/models")).models;live=true}catch(e){}
- $("mdl").innerHTML=m.map(x=>`<option value="${x.id}">${x.label}</option>`).join("");$("st").textContent=live?"Backend connected":"Demo mode: simulated results";$("st").className="pill"+(live?" live":"")}
+ MODELS=m;$("mdl").innerHTML=m.map(x=>`<option value="${x.id}">${x.label}</option>`).join("");setAcc();$("st").textContent=live?"Backend connected":"Demo mode: simulated results";$("st").className="pill"+(live?" live":"")}
+function setAcc(){const o=(MODELS.find(x=>x.id===$("mdl").value)||{}).accuracy,b=$("macc");b.hidden=o==null;if(o!=null)b.textContent=o.toFixed(1)+"% test acc"}
 function mock(cv){const d=cv.getContext("2d").getImageData(0,0,64,64).data;let r=0,g=0,b=0;for(let i=0;i<d.length;i+=4){r+=d[i];g+=d[i+1];b+=d[i+2]}r/=4096;g/=4096;b/=4096;
  const br=(r+g+b)/3,sat=Math.max(r,g,b)-Math.min(r,g,b),s=CL.map(()=>.2),a=(k,v)=>s[CL.indexOf(k)]+=v;
  if(b>g&&b>r){a("SeaLake",3);a("River",1.5)}else if(sat<28){a("Industrial",2.5);a("Highway",1.5);a("Residential",1)}else if(g>r&&br<90){a("Forest",3);a("HerbaceousVegetation",1)}else if(g>r){a("Pasture",2.2);a("HerbaceousVegetation",1.4);a("PermanentCrop",1)}else{a("AnnualCrop",2.4);a("PermanentCrop",1.2);a("Residential",1)}
  const e=s.map(v=>Math.exp(v*1.6)),t=e.reduce((x,y)=>x+y);return e.map(v=>v/t)}
 function fakeCam(k){const c=document.createElement("canvas");c.width=c.height=64;const x=c.getContext("2d"),cx=20+k*4%28,cy=18+k*7%26,g=x.createRadialGradient(cx,cy,2,cx,cy,30);g.addColorStop(0,"rgba(133,79,108,.95)");g.addColorStop(.5,"rgba(223,182,178,.55)");g.addColorStop(1,"rgba(251,228,216,0)");x.fillStyle=g;x.fillRect(0,0,64,64);return c.toDataURL()}
 async function predict(blob,cv){if(live)try{const f=new FormData();f.append("image",blob);f.append("model",$("mdl").value);return await j("/api/predict",{method:"POST",body:f})}catch(e){$("err").textContent="Backend error ("+e.message+"). Showing a simulated result instead."}
- await sleep(1100);const p=mock(cv),o=p.map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);return{label:CL[o[0][1]],confidence:o[0][0],top3:o.slice(0,3).map(([v,i])=>({label:CL[i],prob:v})),gradcam:fakeCam(o[0][1])}}
+ await sleep(1100);const p=mock(cv),o=p.map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);return{label:CL[o[0][1]],confidence:o[0][0],top3:o.slice(0,3).map(([v,i])=>({label:CL[i],prob:v})),probs:o.map(([v,i])=>({label:CL[i],prob:v})),gradcam:fakeCam(o[0][1])}}
 // ---- classify view
 async function load(file){if(!file||!file.type.startsWith("image/"))return;cur=file;$("err").textContent="";const url=URL.createObjectURL(file),im=$("pv");im.src=url;await im.decode().catch(()=>{});im.style.display="block";$("hint").style.display="none";
  const cv=document.createElement("canvas");cv.width=cv.height=64;cv.getContext("2d").drawImage(im,0,0,64,64);$("drop").classList.add("busy");
  const r=await predict(file,cv);$("drop").classList.remove("busy");show(r,url)}
 function show(r,url){$("emp").style.display="none";$("res").classList.add("on");$("lb").textContent=r.label;$("cf").textContent=Math.round(r.confidence*100)+"%";
  $("rg").style.strokeDashoffset=213.6*(1-r.confidence);$("cb").src=url;$("cam").src=r.gradcam||"";$("cue").textContent="What it looks for: "+(CUE[CL.indexOf(r.label)]||"").toLowerCase()+".";
- $("bars").innerHTML=r.top3.map(t=>`<div class="b"><span>${t.label}</span><i><u data-w="${t.prob*100}"></u></i><span>${(t.prob*100).toFixed(1)}%</span></div>`).join("");
+ const lat=document.querySelector(".lat");lat.style.visibility=r.ms==null?"hidden":"visible";if(r.ms!=null)$("ms").textContent=r.ms;
+ // full 10-class belief distribution, best guess first (top3 fallback for older responses)
+ const list=r.probs&&r.probs.length?r.probs:r.top3;
+ $("bars").innerHTML=list.map((t,i)=>`<div class="b"><span>${t.label}</span><i><u data-w="${t.prob*100}"${i?' style="background:var(--ink)"':""}></u></i><span>${(t.prob*100).toFixed(1)}%</span></div>`).join("");
+ $("crs").innerHTML="";$("cmp").hidden=!live;
  requestAnimationFrame(()=>requestAnimationFrame(()=>document.querySelectorAll(".b u").forEach(u=>u.style.width=u.dataset.w+"%")))}
 const dz=$("drop");dz.onclick=()=>$("file").click();dz.onkeydown=e=>{if(e.key==="Enter"||e.key===" ")$("file").click()};$("file").onchange=e=>load(e.target.files[0]);
 ["dragover","dragenter"].forEach(n=>dz.addEventListener(n,e=>{e.preventDefault();dz.classList.add("over")}));["dragleave","drop"].forEach(n=>dz.addEventListener(n,()=>dz.classList.remove("over")));
-dz.addEventListener("drop",e=>{e.preventDefault();load(e.dataTransfer.files[0])});addEventListener("paste",e=>load([...e.clipboardData.files][0]));$("mdl").onchange=()=>cur&&load(cur);$("op").oninput=e=>$("cam").style.opacity=e.target.value/100;
+dz.addEventListener("drop",e=>{e.preventDefault();load(e.dataTransfer.files[0])});addEventListener("paste",e=>load([...e.clipboardData.files][0]));$("mdl").onchange=()=>{setAcc();cur&&load(cur)};$("op").oninput=e=>$("cam").style.opacity=e.target.value/100;
+// ---- cross-model comparison: run the same patch through every other available model
+$("cmp").onclick=async()=>{const b=$("cmp");b.disabled=true;b.textContent="Running the other models…";$("crs").innerHTML="";
+ const others=MODELS.filter(x=>x.id!==$("mdl").value);
+ const rows=await Promise.all(others.map(async x=>{try{const f=new FormData();f.append("image",cur);f.append("model",x.id);return{x,r:await j("/api/predict",{method:"POST",body:f})}}catch(e){return{x,r:null}}}));
+ $("crs").innerHTML=rows.map(({x,r})=>{if(!r)return`<div class="cr"><div><b>${x.label}</b></div><span class="dis">failed</span></div>`;
+  const same=r.label===$("lb").textContent;
+  return`<div class="cr"><img src="${r.gradcam}" alt="heat map for ${x.label}"><div><b>${r.label}</b> <span class="${same?"agr":"dis"}">${same?"agrees":"disagrees"} · ${Math.round(r.confidence*100)}% confidence</span><div class="crtrack"><i style="width:${Math.round(r.confidence*100)}%"></i></div></div><span class="lat"><b>${r.ms}</b> ms</span></div>`}).join("");
+ b.disabled=false;b.textContent="Compare all models on this patch"};
 // procedural sample patches so the demo works with no files
 const SM=[["Forest",x=>{x.fillStyle="#2f5d34";x.fillRect(0,0,64,64);for(let i=0;i<260;i++){x.fillStyle=`rgba(${20+i%30},${70+i%40},40,.8)`;x.fillRect(i*37%64,i*53%64,4,4)}}],["Sea",x=>{x.fillStyle="#2c5f8c";x.fillRect(0,0,64,64);x.fillStyle="#3a74a3";for(let i=0;i<12;i++)x.fillRect(i*17%60,i*11%64,14,2)}],["Crops",x=>{for(let i=0;i<8;i++){x.fillStyle=i%2?"#c9b34f":"#a08a3a";x.fillRect(0,i*8,64,8)}}],["Town",x=>{x.fillStyle="#9a958c";x.fillRect(0,0,64,64);for(let i=0;i<24;i++){x.fillStyle=i%3?"#c98a6a":"#d8d4cc";x.fillRect(i%6*11+2,(i/6|0)*15+3,8,10)}}]];
 SM.forEach(([n,f])=>{const b=document.createElement("button");b.className="smp";b.title=n;const c=document.createElement("canvas");c.width=c.height=64;f(c.getContext("2d"));b.append(c);b.onclick=()=>c.toBlob(bl=>load(new File([bl],n+".png",{type:"image/png"})));$("smp").append(b)});
@@ -93,9 +125,28 @@ async function results(){let m;if(live)try{m=await j("/api/metrics")}catch(e){}
   m={accuracy:d/t*100,macro_f1:d/t*100-.2,confusion:c,efficiency:{fractions:[5,10,25,50,100],scratch:[62,71,82,89,93],transfer:[88,92,95,96.5,97.5]},demo:true}}
  const cnt=(id,v)=>{const e=$(id),t0=performance.now();(function f(n){const k=Math.min(1,(n-t0)/1200);e.textContent=(v*(1-Math.pow(1-k,3))).toFixed(1)+"%";if(k<1)requestAnimationFrame(f)})(t0)};cnt("ac",m.accuracy);cnt("f1",m.macro_f1);
  let h='<em></em>'+AB.map(a=>`<em>${a}</em>`).join("");m.confusion.forEach((r,i)=>{const s=r.reduce((a,b)=>a+b)||1;h+=`<em>${AB[i]}</em>`+r.map((v,k)=>{const p=v/s;return`<i title="${CL[i]} → ${CL[k]}: ${v}" style="animation-delay:${(i+k)*25}ms;background:${i==k?`rgba(43,18,76,${.15+p*.85})`:`rgba(133,79,108,${Math.min(1,p*8)})`}"></i>`}).join("")});$("cm").innerHTML=h;
+ // per-class precision / recall / F1 table (highlight the two weakest classes)
+ const pc=m.per_class;if(pc&&pc.length){const lows=pc.slice().sort((a,b)=>a.f1-b.f1).slice(0,2).map(x=>x.class);
+  $("ptb").innerHTML=pc.map(x=>`<tr${lows.includes(x.class)?" class=low":""}><td>${x.class}</td><td>${(x.precision*100).toFixed(1)}%</td><td>${(x.recall*100).toFixed(1)}%</td><td>${(x.f1*100).toFixed(1)}%</td><td>${x.support}</td></tr>`).join("");
+  $("ptbl").hidden=false;$("ptn").hidden=false}
  const e=m.efficiency,X=i=>60+i*115,Y=v=>270-(v-50)/50*240,path=a=>a.map((v,i)=>(i?"L":"M")+X(i)+","+Y(v)).join("");
- $("ch").innerHTML=[60,70,80,90,100].map(v=>`<line x1="50" x2="540" y1="${Y(v)}" y2="${Y(v)}" stroke="rgba(25,0,25,.15)"/><text x="8" y="${Y(v)+4}">${v}%</text>`).join("")+e.fractions.map((f,i)=>`<text x="${X(i)-8}" y="300">${f}%</text>`).join("")+`<path class="l" pathLength="1" stroke="#854F6C" d="${path(e.scratch)}"/><path class="l" pathLength="1" stroke="#2B124C" style="animation-delay:.3s" d="${path(e.transfer)}"/><text x="${X(4)-120}" y="${Y(e.scratch[4])+22}" fill="#854F6C" style="fill:#854F6C">Scratch CNN</text><text x="${X(4)-150}" y="${Y(e.transfer[4])-10}" style="fill:#2B124C">Pre-trained, fine-tuned</text>`;
- $("mn").textContent=m.demo?"Sample numbers shown because no backend is connected.":"Live results from the backend."}
+ // faint per-seed lines behind the mean curves: run-to-run variability the brief asks to show
+ let seeds="";if(e.scratch_seeds&&e.transfer_seeds)seeds=e.transfer_seeds.map(s=>`<path class="ls" d="${path(s)}"/>`).join("")+e.scratch_seeds.map(s=>`<path class="ls" d="${path(s)}"/>`).join("");
+ $("ch").innerHTML=[60,70,80,90,100].map(v=>`<line x1="50" x2="540" y1="${Y(v)}" y2="${Y(v)}" stroke="rgba(25,0,25,.15)"/><text x="8" y="${Y(v)+4}">${v}%</text>`).join("")+e.fractions.map((f,i)=>`<text x="${X(i)-8}" y="300">${f}%</text>`).join("")+seeds+`<path class="l" pathLength="1" stroke="#854F6C" d="${path(e.scratch)}"/><path class="l" pathLength="1" stroke="#2B124C" style="animation-delay:.3s" d="${path(e.transfer)}"/><text x="${X(4)-120}" y="${Y(e.scratch[4])+22}" fill="#854F6C" style="fill:#854F6C">Scratch CNN</text><text x="${X(4)-150}" y="${Y(e.transfer[4])-10}" style="fill:#2B124C">Pre-trained, fine-tuned</text>`;
+ let note=m.demo?"Sample numbers shown because no backend is connected.":"Thick lines: mean over seeds. Faint lines: each individual seed.";
+ if(e.scratch_seeds&&e.transfer_seeds){const sp=c=>Math.round(Math.max(...c.map(s=>s[0]))-Math.min(...c.map(s=>s[0])));
+  const gap=Math.round(e.transfer[0]-e.scratch[0]);
+  note+=` At 5% data the pre-trained model leads by ${gap} points, and run-to-run spread across seeds is ±${sp(e.scratch_seeds)} points for the scratch CNN vs ±${sp(e.transfer_seeds)} for fine-tuning — with little data, the scratch CNN is both worse and less stable.`}
+ $("mn").textContent=note;
+ // gallery + figures only exist when the live backend (and its results folder) is there
+ if(live&&!m.demo){
+  try{const er=await j("/api/errors");$("failcard").hidden=false;
+   $("errs").innerHTML=er.errors.map(x=>`<div class="ert"><img src="${x.thumb}" alt="${x.actual} misread as ${x.predicted}"><b>${x.actual} → <s>${x.predicted}</s></b><span>${x.count} test patches</span></div>`).join("");
+   $("errsnote").textContent="Why these pairs? Both members share texture or shape cues — straight thin lines read as Highway when they are water, regular field rows read as tree orchards and vice versa."}
+  catch(err){if(live)$("errsnote").textContent="Misclassified-image list not found — run src/evaluate.py first, then reload."}
+  const figs=[["figcam","/results/figures/gradcam_all_classes.png"],["ftsne","/results/figures/mobilenet_v2_tsne.png"],["fabl","/results/figures/scratch_cnn_ablation_comparison.png"]];
+  for(const[id,p]of figs){const img=$(id);img.onerror=()=>img.closest("figure").remove();img.src=p}
+  $("strip").hidden=false}}
 function route(){const r=location.hash==="#results";$("v1").hidden=r;$("v2").hidden=!r;$("tc").className=r?"":"on";$("tr").className=r?"on":"";if(r)results()}
 addEventListener("hashchange",route);init().then(route);
 </script></body></html>
