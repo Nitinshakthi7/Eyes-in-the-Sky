@@ -1,0 +1,3873 @@
+<!doctype html><html><head><meta charset='utf-8'><title>Part5_Rohan_Error_Analysis_Explainability</title><style>
+@page { size: A4; margin: 16mm 14mm; }
+body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10pt; line-height: 1.4; color:#111; }
+h1 { font-size: 20pt; color:#1f3a5f; border-bottom: 3px solid #1f3a5f; padding-bottom:4px; }
+h2 { font-size: 14pt; color:#1f3a5f; margin-top:18px; border-bottom:1px solid #ccc; }
+h3 { font-size: 11.5pt; color:#2b5d8a; margin-top:14px; }
+table { border-collapse: collapse; width:100%; margin:6px 0 10px; font-size:9pt; page-break-inside:auto; }
+th, td { border:1px solid #bbb; padding:3px 5px; vertical-align:top; text-align:left; }
+th { background:#e8eef5; }
+tr { page-break-inside: avoid; }
+pre { background:#f4f5f7; border:1px solid #ddd; padding:6px; font-family: Consolas, 'Courier New', monospace; font-size:7.6pt; line-height:1.25; white-space:pre-wrap; word-wrap:break-word; page-break-inside:auto; }
+code { font-family: Consolas, 'Courier New', monospace; font-size:8.8pt; background:#f1f1f1; padding:0 2px; }
+pre code { background:none; padding:0; font-size:7.6pt; }
+blockquote { border-left:3px solid #8aa; margin:6px 0; padding:2px 10px; color:#333; background:#f7fbfb; }
+</style></head><body><h1>Part 5 – Rohan: Error analysis and explainability (Part E)</h1>
+<h2>1. What my part is</h2>
+<p>Part E asks two questions about our best model: where does it go wrong, and what does it look at when it is right? The model is MobileNetV2, fully fine-tuned, seed 0 (<code>models/mobilenet_v2_full_frac1_seed0.pth</code>), scored on the 4,050 test tiles that were never used for training or for choosing anything. The main files are <code>src/evaluate.py</code> (predictions, confusion matrix, per-class report, list of mistakes), <code>src/gradcam.py</code> (Grad-CAM written by hand) and <code>notebooks/04_evaluation_and_explainability.ipynb</code>, which all three appear in my log. The other Part E scripts are the Grad-CAM runs over all classes, the confidence-drop test, its control, the t-SNE plot, the two error-picture scripts and <code>src/train_part_e.py</code>, the seed-4 scratch CNN runs. The headline result is 3,981 of 4,050 right (98.30% accuracy on the CPU re-scoring, 98.20% macro-F1) and 69 mistakes. The most useful finding is that the mistakes are concentrated in the crop and vegetation classes. The least useful one, which we must say honestly, is that Grad-CAM on this model does not point at anything more important than the rest of the image. The t-SNE plot is a picture of the features, not a measurement.</p>
+<h2>2. Definitions</h2>
+<p><strong>Test split.</strong> The 4,050 images in <code>data/splits.csv</code> marked <code>test</code>. They are used once to score a finished model and never to make a decision.</p>
+<p><strong>Checkpoint (weights file).</strong> The saved numbers of a trained model (<code>.pth</code> file). Loading it gives back the trained model without training again.</p>
+<p><strong>Prediction.</strong> The class the model says an image belongs to. It is the class with the highest score, found with <code>argmax</code>.</p>
+<p><strong>Confusion matrix.</strong> A 10 x 10 table. Each row is the real class, each column is the predicted class. The diagonal holds the correct answers; every off-diagonal cell counts one kind of mistake.</p>
+<p><strong>True positive / false positive / false negative.</strong> For one class: a true positive is an image of the class called that class; a false positive is an image of another class called this class; a false negative is an image of this class called another class.</p>
+<p><strong>Precision.</strong> Of all images the model called class X, the share that really were X. Low precision means X is called too often.</p>
+<p><strong>Recall.</strong> Of all real images of class X, the share the model found. Low recall means X is missed too often.</p>
+<p><strong>F1 score.</strong> The harmonic mean of precision and recall, <code>2 x P x R / (P + R)</code>. It is high only when both are high.</p>
+<p><strong>Accuracy.</strong> Correct predictions divided by all predictions. It is dominated by the bigger classes.</p>
+<p><strong>Macro-F1.</strong> The F1 of each class, then the plain average of the 10 values. Every class counts the same, whatever its size.</p>
+<p><strong>Support.</strong> The number of real test images of a class (for example 450 AnnualCrop, 300 Pasture).</p>
+<p><strong>Classification report.</strong> A table with precision, recall, F1 and support for each class, plus the accuracy and the macro and weighted averages. Saved as <code>results/mobilenet_v2_full_frac1_seed0_classification_report.csv</code>.</p>
+<p><strong>Most-confused pair.</strong> A pair (actual class, predicted class) with many mistakes, for example 7 AnnualCrop images called PermanentCrop.</p>
+<p><strong>Misclassified list.</strong> The file <code>results/misclassified_images.csv</code>: one row per wrong test image with its path, the real and the predicted class.</p>
+<p><strong>Activation.</strong> The numbers a layer produces for one image. A "feature map" is one channel of those numbers, a small grid. For our 64 x 64 tile, the last MobileNetV2 block gives 1,280 maps of 2 x 2.</p>
+<p><strong>Gradient.</strong> How much the output score would change if one number in a layer were changed a little. A positive gradient means "more of this feature increases the score".</p>
+<p><strong>Forward hook.</strong> A function PyTorch calls automatically when data passes forward through a layer. Ours copies the activations out.</p>
+<p><strong>Backward hook.</strong> A function PyTorch calls when gradients pass backward through a layer. Ours copies the gradients out.</p>
+<p><strong>Backward pass (backpropagation).</strong> Computing the gradient of a score with respect to every weight and activation, starting from the output and going backward through the network. <code>score.backward()</code> does this.</p>
+<p><strong>Grad-CAM.</strong> Gradient-weighted Class Activation Mapping. It builds a coarse heat map showing which regions of the last convolution layer pushed the chosen class score up.</p>
+<p><strong>Global average pooling.</strong> Replacing each feature map by its mean. It turns 1,280 maps of 2 x 2 into 1,280 single numbers. Our classifier and our t-SNE features both use it.</p>
+<p><strong>ReLU.</strong> The function <code>max(0, x)</code>. Negative values become 0. In Grad-CAM it keeps only the regions that push the score up.</p>
+<p><strong>Heat map.</strong> A picture of numbers, here shown with the colour map "jet" (blue for low, red for high).</p>
+<p><strong>Overlay.</strong> The heat map drawn semi-transparently on top of the original image.</p>
+<p><strong>Bilinear interpolation.</strong> Smooth resizing of a small grid to a big one by blending neighbouring values. We use it to stretch the 2 x 2 map to 64 x 64.</p>
+<p><strong>Saliency.</strong> A general name for maps that show which input pixels matter for a prediction. Grad-CAM is one kind of saliency map.</p>
+<p><strong>Softmax.</strong> A function that turns the 10 raw scores into probabilities that add up to 1.</p>
+<p><strong>Confidence.</strong> Here, the softmax probability of the class the model chose (or, in the confidence-drop test, of the true class).</p>
+<p><strong>Control experiment.</strong> A second test run in the same way as the first, but with a different choice, so that we can tell whether the first result means anything. Ours compares the hottest patch with the coldest patch and a random patch.</p>
+<p><strong>Confidence drop.</strong> How much the confidence falls after part of the image is hidden. A big fall suggests that the hidden part mattered.</p>
+<p><strong>Embedding (feature vector).</strong> The list of numbers that a network produces for one image before the final classifier. Here, 1,280 numbers per image.</p>
+<p><strong>t-SNE.</strong> t-distributed Stochastic Neighbour Embedding. It places high-dimensional points in 2 dimensions so that points that were close stay close. It is for looking, not for measuring.</p>
+<p><strong>Perplexity.</strong> A t-SNE setting that says roughly how many neighbours each point should consider. We use 30.</p>
+<p><strong>PCA initialisation.</strong> Starting the t-SNE layout from the main directions of the data (principal component analysis) instead of random positions. It makes the result more repeatable.</p>
+<p><strong>Random seed.</strong> A number that fixes the random choices, so the same run gives the same result. Our seed for the t-SNE sample is 42.</p>
+<p><strong>Stratified split and data fraction.</strong> A split that keeps each class in the same share. A fraction of 0.05 means 5% of the training images, chosen per class.</p>
+<p><strong>Seed-4 runs.</strong> Extra scratch CNN training runs with seed 4 at 5%, 10% and 25% of the training images, stored in <code>results/metrics.csv</code>.</p>
+<p><strong>Normalisation (ImageNet mean and std).</strong> Each colour channel is shifted and scaled with fixed numbers (mean 0.485, 0.456, 0.406; std 0.229, 0.224, 0.225). The value 0 after normalisation is therefore the ImageNet average colour, not the average colour of EuroSAT.</p>
+<p><strong><code>model.eval()</code> and <code>torch.no_grad()</code>.</strong> <code>eval()</code> switches off training-only behaviour (dropout, batch-norm updates). <code>no_grad()</code> stops PyTorch from storing gradients when we only need predictions.</p>
+<p><strong>Quantile and top-k.</strong> <code>quantile</code> gives the value below which a share of the numbers fall. <code>topk</code> gives the positions of the largest values. We use them to pick the hottest and coldest pixels.</p>
+<h2>3. Code, file by file</h2>
+<p>Each block is copied from the file. Line numbers refer to that file. Where a block is a notebook cell, the number is the block's own line count.</p>
+<h3>3.1 <code>src/evaluate.py</code></h3>
+<p>Header and imports.</p>
+<pre><code class="language-python">&quot;&quot;&quot;evaluate.py - how good is the model, and where does it fail?
+
+Owner: Rohan
+Part: E (Evaluation + Grad-CAM + t-SNE)
+&quot;&quot;&quot;
+
+import argparse
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+)
+from torchvision.datasets import EuroSAT
+
+from src.dataset import get_loader
+from src.train import build_model
+from src.utils import DATA_DIR, MODELS_DIR, RESULTS_DIR, FIGURES_DIR, get_device
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2-6</td>
+<td>Docstring: says what the file is for and who owns it</td>
+<td>Documentation</td>
+<td>Lets a teammate know the file without reading all of it</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Imports <code>argparse</code></td>
+<td>Standard library</td>
+<td>Lets the file be run from the command line with <code>--model</code>, <code>--fraction</code>, <code>--seed</code></td>
+</tr>
+<tr>
+<td>10-13</td>
+<td>Plotting, numbers, data tables, PyTorch</td>
+<td>Libraries</td>
+<td>Used for the plot, the arrays, the CSV files and the model</td>
+</tr>
+<tr>
+<td>14-19</td>
+<td>Four metrics from scikit-learn</td>
+<td>scikit-learn</td>
+<td>Using the library avoids writing our own F1 or confusion-matrix code, which is easy to get wrong. Could have been written by hand with counts</td>
+</tr>
+<tr>
+<td>20</td>
+<td>Imports the EuroSAT class list</td>
+<td>torchvision</td>
+<td>Gives the 10 class names in the right order (the same order as the labels 0-9)</td>
+</tr>
+<tr>
+<td>22-24</td>
+<td>Our own helpers: loader, model builder, folder paths, device</td>
+<td>Project code</td>
+<td>Every script uses the same paths and the same test loader, so results match</td>
+</tr>
+</tbody>
+</table>
+<p>The function <code>evaluate_model</code>, first part: builds the model, loads the saved weights, makes the test loader.</p>
+<pre><code class="language-python">def evaluate_model(model_name, fraction=1.0, seed=0, batch_size=64):
+
+    device = get_device()
+
+    # Build model architecture
+    model, _ = build_model(model_name)
+
+    # Find checkpoint
+    checkpoint_path = MODELS_DIR / (
+        f&quot;{model_name}_frac{fraction:g}_seed{seed}.pth&quot;
+    )
+
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f&quot;Checkpoint not found: {checkpoint_path}&quot;)
+
+    # Load trained weights
+    state = torch.load(
+        checkpoint_path,
+        map_location=device,
+        weights_only=True,
+    )
+    model.load_state_dict(state)
+    model.to(device)
+    model.eval()
+
+    print(&quot;Model:&quot;, model_name)
+    print(&quot;Checkpoint:&quot;, checkpoint_path)
+    print(&quot;Device:&quot;, device)
+
+    # Load test dataset
+    test_loader = get_loader(
+        &quot;test&quot;,
+        fraction=1.0,
+        seed=0,
+        augment=False,
+        batch_size=batch_size,
+        num_workers=0,
+    )
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>27</td>
+<td>Function takes model name, fraction, seed, batch size</td>
+<td>Function with defaults</td>
+<td>Defaults are the final model; <code>fraction</code> and <code>seed</code> let the same code score the seed-4 runs</td>
+</tr>
+<tr>
+<td>29</td>
+<td>Chooses GPU if there is one, else CPU</td>
+<td>Device</td>
+<td>Our final run was on the CPU; the same code works on either</td>
+</tr>
+<tr>
+<td>32</td>
+<td>Builds an empty model of the right shape</td>
+<td>Model architecture</td>
+<td>Weights can only be loaded into a model of the same shape</td>
+</tr>
+<tr>
+<td>35-37</td>
+<td>Builds the file name, e.g. <code>mobilenet_v2_full_frac1_seed0.pth</code></td>
+<td>File naming</td>
+<td>The name carries the run settings so files do not get mixed up</td>
+</tr>
+<tr>
+<td>39-40</td>
+<td>Stops with a clear error if the weights are missing</td>
+<td>Defensive check</td>
+<td>Better an error message than a silent wrong result</td>
+</tr>
+<tr>
+<td>43-47</td>
+<td>Loads the weights, <code>weights_only=True</code></td>
+<td><code>torch.load</code></td>
+<td><code>weights_only</code> only reads numbers, so an untrusted file cannot run code. Could load the whole object instead, which is less safe</td>
+</tr>
+<tr>
+<td>48-50</td>
+<td>Puts the weights in the model, moves it to the device, switches to evaluation mode</td>
+<td><code>load_state_dict</code>, <code>eval()</code></td>
+<td><code>eval()</code> turns off dropout and stops batch-norm statistics from changing</td>
+</tr>
+<tr>
+<td>52-54</td>
+<td>Prints what was loaded</td>
+<td>Logging</td>
+<td>Lets us see in the output which checkpoint and device were used</td>
+</tr>
+<tr>
+<td>57-64</td>
+<td>Builds the test loader, no augmentation, no shuffling</td>
+<td>DataLoader</td>
+<td>Augmentation is for training only. The test order must stay fixed so the saved mistakes list matches</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">
+    actual_labels = []
+    predicted_labels = []
+
+    # Predict all test images
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images = images.to(device)
+
+            outputs = model(images)
+            predictions = outputs.argmax(dim=1)
+
+            actual_labels.extend(labels.tolist())
+            predicted_labels.extend(predictions.cpu().tolist())
+
+    y_true = np.array(actual_labels)
+    y_pred = np.array(predicted_labels)
+
+    # Save the paths of incorrectly predicted test images
+    test_df = test_loader.dataset.df.reset_index(drop=True)
+
+    class_names = EuroSAT(
+        root=str(DATA_DIR),
+        download=False,
+    ).classes
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>70-72</td>
+<td>Turns off gradient storing, sends each batch to the device</td>
+<td><code>torch.no_grad()</code></td>
+<td>Saves memory and time; we only need the outputs</td>
+</tr>
+<tr>
+<td>74-75</td>
+<td>Runs the model and takes the highest score per image</td>
+<td>Prediction, <code>argmax</code></td>
+<td>The predicted class is the one with the biggest score</td>
+</tr>
+<tr>
+<td>77-78</td>
+<td>Stores the true and predicted labels as plain lists</td>
+<td>Bookkeeping</td>
+<td>Lists are easy to turn into arrays for scikit-learn</td>
+</tr>
+<tr>
+<td>80-81</td>
+<td>Converts the lists to NumPy arrays</td>
+<td>NumPy</td>
+<td>Arrays allow comparisons like <code>y_true != y_pred</code> in one step</td>
+</tr>
+<tr>
+<td>84</td>
+<td>Keeps the table of test rows, so each mistake can be traced to a file</td>
+<td>DataFrame</td>
+<td>Needed to write the paths of the wrong images</td>
+</tr>
+<tr>
+<td>86-89</td>
+<td>Reads the 10 class names from torchvision</td>
+<td>Class names</td>
+<td>Turns numbers 0-9 into names for the tables</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">
+    mistakes = test_df.iloc[np.where(y_true != y_pred)[0]].copy()
+
+    mistakes[&quot;actual_class&quot;] = [
+        class_names[label] for label in y_true[y_true != y_pred]
+    ]
+
+    mistakes[&quot;predicted_class&quot;] = [
+        class_names[label] for label in y_pred[y_true != y_pred]
+    ]
+
+    mistakes[&quot;actual_label&quot;] = y_true[y_true != y_pred]
+    mistakes[&quot;predicted_label&quot;] = y_pred[y_true != y_pred]
+
+    mistakes_path = RESULTS_DIR / &quot;misclassified_images.csv&quot;
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    mistakes.to_csv(mistakes_path, index=False)
+
+    print(&quot;\nMisclassified images saved:&quot;, mistakes_path)
+    print(&quot;Total misclassified images:&quot;, len(mistakes))
+
+    # EuroSAT class names
+    class_names = EuroSAT(
+        root=str(DATA_DIR),
+        download=False,
+    ).classes
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>91</td>
+<td>Selects the rows where the answer is wrong</td>
+<td>Boolean indexing</td>
+<td>One line gives the 69 mistakes</td>
+</tr>
+<tr>
+<td>93-98</td>
+<td>Adds the real and the predicted class names to those rows</td>
+<td>Mapping numbers to names</td>
+<td>A person can read "AnnualCrop -&gt; PermanentCrop" but not "0 -&gt; 6"</td>
+</tr>
+<tr>
+<td>101-102</td>
+<td>Adds the numeric labels too</td>
+<td>Bookkeeping</td>
+<td>Scripts that come later (the Grad-CAM runs) use the numbers</td>
+</tr>
+<tr>
+<td>104-107</td>
+<td>Saves the list to <code>results/misclassified_images.csv</code></td>
+<td>CSV output</td>
+<td>Other scripts read this file to pick examples by a fixed rule</td>
+</tr>
+<tr>
+<td>109-110</td>
+<td>Prints how many mistakes there are</td>
+<td>Logging</td>
+<td>Quick check: 69</td>
+</tr>
+</tbody>
+</table>
+<p>Note: lines 86-89 and 113-116 load the same class names twice. This does no harm, but it is redundant.</p>
+<pre><code class="language-python">
+    # Calculate metrics
+    accuracy = accuracy_score(y_true, y_pred)
+    macro_f1 = f1_score(
+        y_true,
+        y_pred,
+        average=&quot;macro&quot;,
+        zero_division=0,
+    )
+
+    cm = confusion_matrix(
+        y_true,
+        y_pred,
+        labels=list(range(len(class_names))),
+    )
+
+    report = classification_report(
+        y_true,
+        y_pred,
+        labels=list(range(len(class_names))),
+        target_names=class_names,
+        output_dict=True,
+        zero_division=0,
+    )
+
+    # Create output folders
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+    name = f&quot;{model_name}_frac{fraction:g}_seed{seed}&quot;
+
+    # Save confusion matrix
+    cm_path = RESULTS_DIR / f&quot;{name}_confusion_matrix.csv&quot;
+
+    pd.DataFrame(
+        cm,
+        index=class_names,
+        columns=class_names,
+    ).to_csv(cm_path)
+
+    # Save classification report
+    report_path = RESULTS_DIR / f&quot;{name}_classification_report.csv&quot;
+
+    pd.DataFrame(report).transpose().to_csv(report_path)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>119</td>
+<td>Accuracy: correct divided by all</td>
+<td>Accuracy</td>
+<td>The first number everyone asks for</td>
+</tr>
+<tr>
+<td>120-125</td>
+<td>Macro-F1 with <code>average="macro"</code></td>
+<td>Macro-F1</td>
+<td>Gives each class equal weight. <code>zero_division=0</code> returns 0 instead of an error for a class that is never predicted</td>
+</tr>
+<tr>
+<td>127-131</td>
+<td>Confusion matrix, with the labels 0-9 forced in order</td>
+<td><code>confusion_matrix</code></td>
+<td>Forcing the labels keeps the rows and columns in the same order even if a class is missing</td>
+</tr>
+<tr>
+<td>133-140</td>
+<td>Classification report as a dictionary</td>
+<td><code>classification_report</code></td>
+<td><code>output_dict=True</code> lets us save it as a table</td>
+</tr>
+<tr>
+<td>143-144</td>
+<td>Makes the output folders if missing</td>
+<td><code>mkdir</code></td>
+<td>The script runs on a new laptop without setup</td>
+</tr>
+<tr>
+<td>149-155</td>
+<td>Saves the confusion matrix as CSV with class names</td>
+<td>CSV</td>
+<td>The notebook reads this file</td>
+</tr>
+<tr>
+<td>158-160</td>
+<td>Saves the per-class report as CSV</td>
+<td>CSV</td>
+<td>Same reason; the file has precision, recall, f1-score and support</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">
+    # Plot confusion matrix
+    fig, ax = plt.subplots(figsize=(9, 8))
+
+    image = ax.imshow(cm, cmap=&quot;Blues&quot;)
+    fig.colorbar(image, ax=ax)
+
+    ax.set_xticks(range(len(class_names)))
+    ax.set_yticks(range(len(class_names)))
+
+    ax.set_xticklabels(class_names, rotation=45, ha=&quot;right&quot;)
+    ax.set_yticklabels(class_names)
+
+    ax.set_xlabel(&quot;Predicted class&quot;)
+    ax.set_ylabel(&quot;Actual class&quot;)
+    ax.set_title(f&quot;Confusion Matrix - {model_name}&quot;)
+
+    # Write numbers inside matrix cells
+    for i in range(len(class_names)):
+        for j in range(len(class_names)):
+            ax.text(j, i, cm[i, j], ha=&quot;center&quot;, va=&quot;center&quot;)
+
+    fig.tight_layout()
+
+    plot_path = FIGURES_DIR / f&quot;{name}_confusion_matrix.png&quot;
+
+    fig.savefig(plot_path, dpi=100)
+    plt.close(fig)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>163-166</td>
+<td>Creates a figure and a blue colour map of the matrix</td>
+<td>matplotlib</td>
+<td>Darker blue means more images in that cell</td>
+</tr>
+<tr>
+<td>168-172</td>
+<td>Sets tick labels and rotates the class names</td>
+<td>Plot layout</td>
+<td>Long class names need the rotation to be readable</td>
+</tr>
+<tr>
+<td>174-176</td>
+<td>Axis labels and title</td>
+<td>Plot</td>
+<td>"Predicted class" on the x-axis, "Actual class" on the y-axis (the reverse of many textbooks, so read the axes first)</td>
+</tr>
+<tr>
+<td>179-181</td>
+<td>Writes each count inside its cell</td>
+<td>Annotation</td>
+<td>Numbers are needed for the viva; colour alone is not enough</td>
+</tr>
+<tr>
+<td>185-188</td>
+<td>Saves at 100 dpi and closes the figure</td>
+<td>Save</td>
+<td>Closing frees memory when many plots are made</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">
+    # Display results
+    print(&quot;\n========== EVALUATION RESULTS ==========&quot;)
+    print(&quot;Test images:&quot;, len(y_true))
+    print(f&quot;Test accuracy: {accuracy:.4f}&quot;)
+    print(f&quot;Macro-F1:     {macro_f1:.4f}&quot;)
+
+    print(&quot;\nPer-class report:&quot;)
+    print(
+        classification_report(
+            y_true,
+            y_pred,
+            target_names=class_names,
+            zero_division=0,
+        )
+    )
+
+    print(&quot;Confusion matrix CSV:&quot;, cm_path)
+    print(&quot;Classification report CSV:&quot;, report_path)
+    print(&quot;Confusion matrix plot:&quot;, plot_path)
+
+    return y_true, y_pred, cm, report
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>191-194</td>
+<td>Prints test size, accuracy, macro-F1</td>
+<td>Logging</td>
+<td>The three numbers to remember</td>
+</tr>
+<tr>
+<td>196-204</td>
+<td>Prints the per-class table again</td>
+<td>Logging</td>
+<td>The same table as the CSV, for a quick look in the terminal</td>
+</tr>
+<tr>
+<td>206-208</td>
+<td>Prints where the files are</td>
+<td>Logging</td>
+<td>Lets us find the outputs</td>
+</tr>
+<tr>
+<td>210</td>
+<td>Returns the true labels, predictions, matrix and report</td>
+<td>Return values</td>
+<td>Lets another script or the notebook reuse them without running the model again</td>
+</tr>
+</tbody>
+</table>
+<p>Main block (command line).</p>
+<pre><code class="language-python">if __name__ == &quot;__main__&quot;:
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(&quot;--model&quot;, default=&quot;mobilenet_v2_full&quot;)
+    parser.add_argument(&quot;--fraction&quot;, type=float, default=1.0)
+    parser.add_argument(&quot;--seed&quot;, type=int, default=0)
+    parser.add_argument(&quot;--batch-size&quot;, type=int, default=64)
+
+    args = parser.parse_args()
+
+    evaluate_model(
+        model_name=args.model,
+        fraction=args.fraction,
+        seed=args.seed,
+        batch_size=args.batch_size,
+    )
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>217-220</td>
+<td>Reads the options from the command line, with defaults for the final model</td>
+<td><code>argparse</code></td>
+<td>Lets us score the seed-4 runs with the same file. Could hard-code the names instead</td>
+</tr>
+<tr>
+<td>222-229</td>
+<td>Calls the function with the options</td>
+<td>Entry point</td>
+<td><code>if __name__ == "__main__"</code> means the code only runs when the file is run directly, not when it is imported</td>
+</tr>
+</tbody>
+</table>
+<h3>3.2 <code>src/gradcam.py</code>: Grad-CAM written by hand</h3>
+<p>This file is the core of the explainability part. The function takes one image (shape 1 x 3 x H x W), a layer, and returns a heat map (64 x 64, values 0 to 1) and the predicted class.</p>
+<pre><code class="language-python">def grad_cam(model, image, layer):
+    &quot;&quot;&quot;Generate a Grad-CAM heatmap for one image.
+
+    Args:
+        model: trained classification model
+        image: tensor shaped (1, 3, H, W)
+        layer: target convolutional layer
+
+    Returns:
+        heatmap: tensor shaped (H, W), values between 0 and 1
+        predicted_class: integer predicted class
+    &quot;&quot;&quot;
+
+    model.eval()
+
+    activations = None
+    gradients = None
+
+    # Save feature maps from the target layer
+    def forward_hook(module, inputs, output):
+        nonlocal activations
+        activations = output
+
+    # Save gradients flowing through the target layer
+    def backward_hook(module, grad_input, grad_output):
+        nonlocal gradients
+        gradients = grad_output[0]
+
+    forward_handle = layer.register_forward_hook(forward_hook)
+    backward_handle = layer.register_full_backward_hook(backward_hook)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>11-22</td>
+<td>Signature and docstring: input, layer, outputs</td>
+<td>Function contract</td>
+<td>States the shapes, so the caller knows what to pass</td>
+</tr>
+<tr>
+<td>24</td>
+<td>Sets the model to evaluation mode</td>
+<td><code>eval()</code></td>
+<td>Batch-norm and dropout must not change during the explanation</td>
+</tr>
+<tr>
+<td>26-27</td>
+<td>Two empty holders for activations and gradients</td>
+<td>Closure, <code>nonlocal</code></td>
+<td>The hook functions write into these variables</td>
+</tr>
+<tr>
+<td>30-32</td>
+<td>Forward hook: copies the layer output</td>
+<td>Forward hook, activation</td>
+<td>This is the feature map A^k we need for the weighted sum</td>
+</tr>
+<tr>
+<td>35-37</td>
+<td>Backward hook: copies the gradient of the layer output</td>
+<td>Backward hook, gradient</td>
+<td><code>grad_output[0]</code> is the gradient of the score with respect to the layer's output</td>
+</tr>
+<tr>
+<td>39-40</td>
+<td>Registers the two hooks on the chosen layer</td>
+<td><code>register_forward_hook</code>, <code>register_full_backward_hook</code></td>
+<td>The "full" backward hook is the version that gives the gradient of the output. Could use tensor hooks instead</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">    try:
+        model.zero_grad()
+
+        # Forward pass
+        output = model(image)
+        predicted_class = output.argmax(dim=1).item()
+
+        # Backpropagate the predicted class score
+        score = output[0, predicted_class]
+        score.backward()
+
+        # Average gradients across spatial dimensions
+        weights = gradients.mean(dim=(2, 3), keepdim=True)
+
+        # Weighted sum of feature maps
+        cam = (weights * activations).sum(dim=1, keepdim=True)
+
+        # Keep only positive importance
+        cam = F.relu(cam)
+
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>43</td>
+<td>Clears old gradients</td>
+<td><code>zero_grad</code></td>
+<td>Without it, gradients from an earlier image would be added in</td>
+</tr>
+<tr>
+<td>46-47</td>
+<td>Runs the image and takes the predicted class</td>
+<td>Forward pass, <code>argmax</code></td>
+<td>The explanation is for the class the model actually chose</td>
+</tr>
+<tr>
+<td>50-51</td>
+<td>Takes that class's score and backpropagates it</td>
+<td>Backward pass</td>
+<td>Gives the gradient of this one score for every activation</td>
+</tr>
+<tr>
+<td>54</td>
+<td>Weight of each feature map = its gradient averaged over height and width</td>
+<td>alpha_k (the weights)</td>
+<td>Each map gets one importance number. Averaging is the Grad-CAM rule</td>
+</tr>
+<tr>
+<td>57</td>
+<td>Weighted sum of the feature maps over channels</td>
+<td>Linear combination</td>
+<td>Adds up <code>alpha_k x A^k</code> into one 2 x 2 map</td>
+</tr>
+<tr>
+<td>60</td>
+<td>ReLU: keeps only positive values</td>
+<td>ReLU</td>
+<td>Keeps the regions that push the chosen score up, drops those pushing it down</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">        # Resize heatmap to original image dimensions
+        cam = F.interpolate(
+            cam,
+            size=image.shape[2:],
+            mode=&quot;bilinear&quot;,
+            align_corners=False,
+        )
+
+        # Normalize to 0-1
+        cam = cam[0, 0]
+        cam = cam - cam.min()
+        cam = cam / (cam.max() + 1e-8)
+
+        return cam.detach().cpu(), predicted_class
+
+    finally:
+        forward_handle.remove()
+        backward_handle.remove()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>63-68</td>
+<td>Stretches the 2 x 2 map to the image size with bilinear interpolation</td>
+<td>Upsampling</td>
+<td>The heat map must match the 64 x 64 image to be overlaid. Nearest-neighbour would show blocks</td>
+</tr>
+<tr>
+<td>71-73</td>
+<td>Rescales to 0 to 1 (subtract min, divide by max)</td>
+<td>Min-max normalisation</td>
+<td>Makes colours comparable. The 1e-8 stops division by zero for an all-zero map. Note this always stretches the map so that its lowest point is 0</td>
+</tr>
+<tr>
+<td>75</td>
+<td>Returns the map and the predicted class, moved to the CPU</td>
+<td>Return</td>
+<td>Plotting libraries need CPU arrays</td>
+</tr>
+<tr>
+<td>77-79</td>
+<td>Removes both hooks, even if an error happened</td>
+<td><code>try / finally</code></td>
+<td>Without this, a second call would add a second hook and store wrong values</td>
+</tr>
+</tbody>
+</table>
+<h3>3.3 <code>src/gradcam_all_classes.py</code>: one correct and one wrong image per class</h3>
+<p>The script is run as <code>python -m src.gradcam_all_classes</code>. It uses rules to pick images, not personal choice.</p>
+<pre><code class="language-python">&quot;&quot;&quot;Grad-CAM for one correct image of every class (first correct image in file order) plus one mistake per class.
+
+Run from the repo folder:  python -m src.gradcam_all_classes
+&quot;&quot;&quot;
+
+import torch
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
+from torchvision import transforms
+from pathlib import Path
+
+from src.models import build_transfer_model
+from src.gradcam import grad_cam
+from src.utils import DATA_DIR, FIGURES_DIR, MODELS_DIR, RESULTS_DIR, SPLITS_CSV
+
+device = torch.device(&quot;cpu&quot;)
+
+class_names = [
+    &quot;AnnualCrop&quot;, &quot;Forest&quot;, &quot;HerbaceousVegetation&quot;,
+    &quot;Highway&quot;, &quot;Industrial&quot;, &quot;Pasture&quot;,
+    &quot;PermanentCrop&quot;, &quot;Residential&quot;, &quot;River&quot;, &quot;SeaLake&quot;
+]
+
+model = build_transfer_model(&quot;mobilenet_v2&quot;, freeze=False)
+checkpoint = MODELS_DIR / &quot;mobilenet_v2_full_frac1_seed0.pth&quot;
+model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
+model.to(device)
+model.eval()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-4</td>
+<td>Docstring: the rule for choosing images</td>
+<td>Documentation</td>
+<td>The rule is written down so nobody can say images were picked by hand</td>
+</tr>
+<tr>
+<td>6-16</td>
+<td>Imports</td>
+<td>Libraries</td>
+<td>Same helpers as the rest of the project</td>
+</tr>
+<tr>
+<td>18</td>
+<td>Runs on the CPU</td>
+<td>Device</td>
+<td>The model is small enough; the CPU is slower but works on any laptop</td>
+</tr>
+<tr>
+<td>20-24</td>
+<td>Class names in order 0 to 9</td>
+<td>Labels</td>
+<td>Must match the training labels</td>
+</tr>
+<tr>
+<td>26-30</td>
+<td>Builds the MobileNetV2 used in training, loads the final weights, sets evaluation mode</td>
+<td>Transfer model, checkpoint</td>
+<td><code>freeze=False</code> means all layers were fine-tuned, as in the final model</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">transform = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
+])
+
+splits = pd.read_csv(SPLITS_CSV)
+test_df = splits[splits[&quot;split&quot;] == &quot;test&quot;].reset_index(drop=True)
+wrong_df = pd.read_csv(RESULTS_DIR / &quot;misclassified_images.csv&quot;)
+
+samples = []
+
+for class_name in class_names:
+    mistakes = wrong_df[wrong_df[&quot;actual_class&quot;] == class_name]
+    if len(mistakes) &gt; 0:
+        row = mistakes.iloc[0]
+        image_path = DATA_DIR / row[&quot;path&quot;]
+        samples.append((
+            class_name,
+            Image.open(image_path).convert(&quot;RGB&quot;),
+            False
+        ))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>32-39</td>
+<td>Same preprocessing as training: resize to 64 x 64, to tensor, ImageNet normalisation</td>
+<td>Preprocessing</td>
+<td>The model only works well on inputs prepared the same way</td>
+</tr>
+<tr>
+<td>41-43</td>
+<td>Loads the split table and the saved mistakes list</td>
+<td>CSV, filtering</td>
+<td>Mistakes come from the file written by <code>evaluate.py</code></td>
+</tr>
+<tr>
+<td>45-56</td>
+<td>For each class, takes the first wrong image in the mistakes list</td>
+<td>Fixed rule</td>
+<td>"First in the file" is a rule we can state. The mistakes list is in test-split order, so this is the first mistake in that order</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">correct_found = set()
+
+for _, row in test_df.iterrows():
+    class_name = row[&quot;class_name&quot;]
+
+    if class_name in correct_found:
+        continue
+
+    image_path = DATA_DIR / row[&quot;path&quot;]
+    image = Image.open(image_path).convert(&quot;RGB&quot;)
+
+    input_tensor = transform(image).unsqueeze(0)
+
+    with torch.no_grad():
+        prediction = model(input_tensor).argmax(1).item()
+
+    if prediction == row[&quot;label&quot;]:
+        samples.append((class_name, image, True))
+        correct_found.add(class_name)
+
+    if len(correct_found) == 10:
+        break
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>58</td>
+<td>Set of classes already given a correct example</td>
+<td>Set</td>
+<td>Stops after one correct image per class</td>
+</tr>
+<tr>
+<td>60-66</td>
+<td>Walks through the test rows in file order and opens each image</td>
+<td>Loop</td>
+<td>Same order every run</td>
+</tr>
+<tr>
+<td>69-72</td>
+<td>Predicts the image without storing gradients</td>
+<td><code>no_grad</code></td>
+<td>Only the prediction is needed here</td>
+</tr>
+<tr>
+<td>74-76</td>
+<td>Keeps the image if the prediction is right and the class is new</td>
+<td>Fixed rule</td>
+<td>"First correct image of each class in file order"</td>
+</tr>
+<tr>
+<td>78-79</td>
+<td>Stops once all 10 classes have one</td>
+<td>Early stop</td>
+<td>Avoids scanning the whole test set</td>
+</tr>
+</tbody>
+</table>
+<p>Note: the file says "first correct image in file order". This is a rule, not a random sample, and it is a single image per class. It says nothing about how typical the image is.</p>
+<pre><code class="language-python">fig, axes = plt.subplots(
+    len(samples), 3,
+    figsize=(12, len(samples) * 2.8)
+)
+
+if len(samples) == 1:
+    axes = np.expand_dims(axes, axis=0)
+
+for i, (class_name, image, is_correct) in enumerate(samples):
+    input_tensor = transform(image).unsqueeze(0)
+
+    heatmap, predicted_class = grad_cam(
+        model,
+        input_tensor,
+        layer=model.features[-1]
+    )
+
+    image_np = np.array(image.resize((64, 64)))
+
+    axes[i, 0].imshow(image_np)
+    axes[i, 0].set_title(
+        f&quot;{class_name} - {'Correct' if is_correct else 'Wrong'}&quot;
+    )
+    axes[i, 0].axis(&quot;off&quot;)
+
+    axes[i, 1].imshow(heatmap, cmap=&quot;jet&quot;)
+    axes[i, 1].set_title(&quot;Grad-CAM&quot;)
+    axes[i, 1].axis(&quot;off&quot;)
+
+    axes[i, 2].imshow(image_np)
+    axes[i, 2].imshow(heatmap, cmap=&quot;jet&quot;, alpha=0.4)
+    axes[i, 2].set_title(f&quot;Predicted: {class_names[predicted_class]}&quot;)
+    axes[i, 2].axis(&quot;off&quot;)
+
+plt.tight_layout()
+
+output = FIGURES_DIR / &quot;gradcam_all_classes.png&quot;
+plt.savefig(output, dpi=150)
+plt.close()
+
+print(&quot;Grad-CAM saved:&quot;, output)
+print(&quot;Images included:&quot;, len(samples))
+print(&quot;Correct examples:&quot;, len(correct_found))
+print(&quot;Misclassified examples:&quot;, len(samples) - len(correct_found))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>81-87</td>
+<td>One row per image, three columns (picture, heat map, overlay)</td>
+<td>matplotlib subplots</td>
+<td>Shows the image, the heat map and the overlay side by side</td>
+</tr>
+<tr>
+<td>89-96</td>
+<td>Computes Grad-CAM for each chosen image on the last layer, <code>model.features[-1]</code></td>
+<td>Grad-CAM</td>
+<td>The last block is the deepest that still has positions</td>
+</tr>
+<tr>
+<td>98</td>
+<td>Makes a 64 x 64 copy of the picture for display</td>
+<td>Display</td>
+<td>Keeps the picture and the heat map the same size</td>
+</tr>
+<tr>
+<td>100-113</td>
+<td>Draws the picture, the heat map in "jet" colours, and the heat map on top at 40% opacity</td>
+<td>Overlay</td>
+<td>The title shows the predicted class, so mistakes are visible</td>
+</tr>
+<tr>
+<td>117-124</td>
+<td>Saves the figure and prints counts (expected: 19 images, 10 correct, 9 wrong)</td>
+<td>Output</td>
+<td>The count check shows that SeaLake had no mistake, so only 9 wrong examples exist</td>
+</tr>
+</tbody>
+</table>
+<h3>3.4 <code>src/gradcam_confidence_drop.py</code>: hide the hottest 20% and measure the fall</h3>
+<p>The docstring says clearly that this test has no control. The control is <code>src/gradcam_sanity_check.py</code> (section 3.5).</p>
+<pre><code class="language-python">&quot;&quot;&quot;Grad-CAM confidence-drop experiment.
+
+Masks the hottest 20% of pixels of 50 correctly classified test images and measures how much the confidence falls.
+Caution: there is NO control here (no coldest-area or random-area patch), so a small drop alone does not show that the
+highlighted area matters. See src/gradcam_sanity_check.py for the control.
+
+Run from the repo folder:  python -m src.gradcam_confidence_drop
+&quot;&quot;&quot;
+
+import torch
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from PIL import Image
+from torchvision import transforms
+from pathlib import Path
+
+from src.models import build_transfer_model
+from src.gradcam import grad_cam
+from src.utils import DATA_DIR, FIGURES_DIR, MODELS_DIR, RESULTS_DIR
+
+device = torch.device(&quot;cpu&quot;)
+SAMPLE_SIZE = 50
+MASK_PERCENT = 20
+SEED = 42
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-8</td>
+<td>Docstring: what is measured, the warning about no control</td>
+<td>Documentation</td>
+<td>The limitation is stated in the code itself</td>
+</tr>
+<tr>
+<td>10-21</td>
+<td>Imports</td>
+<td>Libraries</td>
+<td>Uses the same Grad-CAM function as the other scripts</td>
+</tr>
+<tr>
+<td>24-26</td>
+<td>Constants: 50 images, hide 20%, seed 42</td>
+<td>Parameters</td>
+<td>50 is small but enough for a first look; 20% is one choice, others were not tried</td>
+</tr>
+<tr>
+<td>28-29</td>
+<td>Sets the random seeds</td>
+<td>Seed</td>
+<td>Makes the shuffle repeatable</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">torch.manual_seed(SEED)
+np.random.seed(SEED)
+
+class_names = [
+    &quot;AnnualCrop&quot;, &quot;Forest&quot;, &quot;HerbaceousVegetation&quot;,
+    &quot;Highway&quot;, &quot;Industrial&quot;, &quot;Pasture&quot;,
+    &quot;PermanentCrop&quot;, &quot;Residential&quot;, &quot;River&quot;, &quot;SeaLake&quot;
+]
+
+model = build_transfer_model(&quot;mobilenet_v2&quot;, freeze=False)
+checkpoint = MODELS_DIR / &quot;mobilenet_v2_full_frac1_seed0.pth&quot;
+model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
+model.to(device)
+model.eval()
+
+transform = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
+])
+
+df = pd.read_csv(DATA_DIR / &quot;splits.csv&quot;)
+df = df[df[&quot;split&quot;] == &quot;test&quot;].sample(
+    frac=1, random_state=SEED
+).reset_index(drop=True)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>31-41</td>
+<td>Class names and the trained model, in evaluation mode</td>
+<td>Model</td>
+<td>Same final weights as all of Part E</td>
+</tr>
+<tr>
+<td>43-50</td>
+<td>Same preprocessing as training</td>
+<td>Preprocessing</td>
+<td>Consistency</td>
+</tr>
+<tr>
+<td>52-55</td>
+<td>Reads the test rows and shuffles them with seed 42</td>
+<td>Shuffle</td>
+<td>The 50 images are a random sample from the test set, not the first 50</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">results = []
+
+for _, row in df.iterrows():
+    image_path = DATA_DIR / row[&quot;path&quot;]
+    original = Image.open(image_path).convert(&quot;RGB&quot;)
+    image = transform(original).unsqueeze(0).to(device)
+
+    # Original prediction and confidence
+    with torch.no_grad():
+        output = model(image)
+        probabilities = torch.softmax(output, dim=1)
+        predicted = output.argmax(dim=1).item()
+
+    actual = int(row[&quot;label&quot;])
+
+    # Only use correctly classified images
+    if predicted != actual:
+        continue
+
+    original_confidence = probabilities[0, actual].item()
+
+    # Generate Grad-CAM
+    heatmap, _ = grad_cam(model, image, model.features[-1])
+    heatmap = heatmap.to(device)
+
+    # Mask top 20% most important pixels
+    threshold = torch.quantile(
+        heatmap.flatten(), 1 - MASK_PERCENT / 100
+    )
+    mask = heatmap &gt;= threshold
+
+    masked_image = image.clone()
+    masked_image[0, :, mask] = 0.0
+
+    # Confidence after masking
+    with torch.no_grad():
+        masked_output = model(masked_image)
+        masked_probabilities = torch.softmax(masked_output, dim=1)
+        masked_confidence = masked_probabilities[0, actual].item()
+
+    confidence_drop = original_confidence - masked_confidence
+
+    results.append({
+        &quot;path&quot;: row[&quot;path&quot;],
+        &quot;class_name&quot;: class_names[actual],
+        &quot;original_confidence&quot;: original_confidence,
+        &quot;masked_confidence&quot;: masked_confidence,
+        &quot;confidence_drop&quot;: confidence_drop
+    })
+
+    if len(results) &gt;= SAMPLE_SIZE:
+        break
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>59-62</td>
+<td>Loads one test image and prepares it</td>
+<td>Loop</td>
+<td>Each image in shuffled order</td>
+</tr>
+<tr>
+<td>65-68</td>
+<td>Original probabilities and prediction</td>
+<td>Softmax</td>
+<td>Confidence is the probability of the chosen class</td>
+</tr>
+<tr>
+<td>70-74</td>
+<td>Skips images the model gets wrong</td>
+<td>Filter</td>
+<td>The test is about correct answers only</td>
+</tr>
+<tr>
+<td>76</td>
+<td>Stores the confidence of the true class</td>
+<td>Confidence</td>
+<td>Same class used later for the masked image</td>
+</tr>
+<tr>
+<td>79-80</td>
+<td>Grad-CAM for the image, moved to the device</td>
+<td>Grad-CAM</td>
+<td>The explanation for this image</td>
+</tr>
+<tr>
+<td>83-86</td>
+<td>Threshold at the 80th percentile; the mask is the pixels at or above it</td>
+<td><code>quantile</code>, mask</td>
+<td>About 20% of pixels are selected. With <code>&gt;=</code>, ties at the threshold can select a little more</td>
+</tr>
+<tr>
+<td>88-89</td>
+<td>Copies the image and sets the masked pixels to 0 in every channel</td>
+<td>Masking</td>
+<td>0 after normalisation is the ImageNet average colour, not the EuroSAT average. Also a solid colour can look unnatural to the model</td>
+</tr>
+<tr>
+<td>92-95</td>
+<td>Confidence of the true class after masking</td>
+<td>Confidence</td>
+<td>The second number of the pair</td>
+</tr>
+<tr>
+<td>97</td>
+<td>Drop = before minus after</td>
+<td>Confidence drop</td>
+<td>Positive means confidence fell. Negative means it rose (10 of 50 images)</td>
+</tr>
+<tr>
+<td>99-105</td>
+<td>Stores one row per image</td>
+<td>Records</td>
+<td>Feeds the CSV</td>
+</tr>
+<tr>
+<td>107-108</td>
+<td>Stops at 50</td>
+<td>Limit</td>
+<td>Sample size</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">results_df = pd.DataFrame(results)
+
+output_csv = RESULTS_DIR / &quot;gradcam_confidence_drop.csv&quot;
+results_df.to_csv(output_csv, index=False)
+
+if len(results_df) &gt; 0:
+    mean_original = results_df[&quot;original_confidence&quot;].mean()
+    mean_masked = results_df[&quot;masked_confidence&quot;].mean()
+
+    plt.figure(figsize=(7, 5))
+    plt.bar(
+        [&quot;Original&quot;, &quot;Grad-CAM Masked&quot;],
+        [mean_original, mean_masked]
+    )
+    plt.ylabel(&quot;Average Confidence&quot;)
+    plt.title(&quot;Confidence Drop After Grad-CAM Region Masking&quot;)
+    plt.ylim(0, 1)
+    plt.tight_layout()
+
+    output_fig = FIGURES_DIR / &quot;gradcam_confidence_drop.png&quot;
+    plt.savefig(output_fig, dpi=150, bbox_inches=&quot;tight&quot;)
+    plt.close()
+
+    print(&quot;Images tested:&quot;, len(results_df))
+    print(f&quot;Average original confidence: {mean_original:.4f}&quot;)
+    print(f&quot;Average masked confidence:  {mean_masked:.4f}&quot;)
+    print(f&quot;Average confidence drop:    {mean_original - mean_masked:.4f}&quot;)
+    print(&quot;CSV saved:&quot;, output_csv)
+    print(&quot;Graph saved:&quot;, output_fig)
+else:
+    print(&quot;No correctly classified images were processed.&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>112-113</td>
+<td>Saves the 50 rows to <code>results/gradcam_confidence_drop.csv</code></td>
+<td>CSV</td>
+<td>Lets anyone check the numbers</td>
+</tr>
+<tr>
+<td>116-117</td>
+<td>Averages original and masked confidence</td>
+<td>Mean</td>
+<td>The two numbers in the summary</td>
+</tr>
+<tr>
+<td>119-131</td>
+<td>Bar chart of the two means, saved as a figure</td>
+<td>Plot</td>
+<td>A picture only; the bars are close together, which is itself the message</td>
+</tr>
+<tr>
+<td>133-138</td>
+<td>Prints the counts and the average drop</td>
+<td>Logging</td>
+<td>Gives 0.0108 (1.08 points) on the saved run</td>
+</tr>
+<tr>
+<td>139-140</td>
+<td>Message if no image was processed</td>
+<td>Defensive check</td>
+<td>Avoids an empty-table error</td>
+</tr>
+</tbody>
+</table>
+<h3>3.5 <code>src/gradcam_sanity_check.py</code>: the control experiment</h3>
+<p>This file is the control for section 3.4. It was added by Nitin, not by Rohan. Its module docstring (not copied here) describes the same two checks as below. It runs on 200 test images: the first 20 of each class in <code>splits.csv</code> order.</p>
+<pre><code class="language-python">import numpy as np
+import pandas as pd
+import torch
+
+from src.dataset import EuroSATDataset
+from src.gradcam import grad_cam
+from src.train import build_model
+from src.utils import MODELS_DIR, RESULTS_DIR
+
+IMAGES_PER_CLASS = 20
+HIDE = 1024                                   # 25% of the 64 x 64 = 4096 pixels
+QUADRANTS = {(0, 0): &quot;top-left&quot;, (0, 1): &quot;top-right&quot;, (1, 0): &quot;bottom-left&quot;, (1, 1): &quot;bottom-right&quot;}
+
+
+def painted(batch, flat_ids):
+    out = batch.clone().reshape(1, 3, -1)
+    out[:, :, flat_ids] = 0.0                 # 0 after normalisation = the average colour of the training data
+    return out.reshape(1, 3, 64, 64)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>15-22</td>
+<td>Imports</td>
+<td>Libraries</td>
+<td>Uses the project's dataset and model code</td>
+</tr>
+<tr>
+<td>24</td>
+<td>20 images per class</td>
+<td>Sample size</td>
+<td>200 images in total; a fixed rule, not chosen by look</td>
+</tr>
+<tr>
+<td>25</td>
+<td>HIDE = 1024 pixels = 25% of 64 x 64</td>
+<td>Patch size</td>
+<td>Same size for the hottest, coldest and random patch, so the comparison is fair</td>
+</tr>
+<tr>
+<td>26</td>
+<td>Maps the 2 x 2 quarter index to a name</td>
+<td>Lookup</td>
+<td>Used to report "bottom-right" and similar</td>
+</tr>
+<tr>
+<td>29-32</td>
+<td>Hides the chosen pixels in all three colour channels and returns the batch</td>
+<td>Masking</td>
+<td>Comment on line 31 says "the average colour of the training data". This is wrong: 0 after normalisation is the ImageNet mean colour (see section 2)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">def main():
+    model, _ = build_model(&quot;mobilenet_v2_full&quot;)
+    state = torch.load(MODELS_DIR / &quot;mobilenet_v2_full_frac1_seed0.pth&quot;, map_location=&quot;cpu&quot;, weights_only=True)
+    model.load_state_dict(state)
+    model.eval()
+
+    data = EuroSATDataset(&quot;test&quot;)
+    generator = torch.Generator().manual_seed(0)
+    rows = []
+    for label in range(10):
+        for index in data.df.index[data.df[&quot;label&quot;] == label][:IMAGES_PER_CLASS]:
+            batch = data[int(index)][0].unsqueeze(0)
+            heat, predicted = grad_cam(model, batch, model.features[-1])
+            h = heat.numpy()
+            quarters = np.array([[h[:32, :32].mean(), h[:32, 32:].mean()], [h[32:, :32].mean(), h[32:, 32:].mean()]])
+            flat = heat.flatten()
+            top, left = torch.randint(0, 33, (2,), generator=generator).tolist()
+            square = ((torch.arange(32)[:, None] + top) * 64 + (torch.arange(32)[None, :] + left)).flatten()
+            patches = {&quot;hottest&quot;: flat.topk(HIDE).indices, &quot;coldest&quot;: (-flat).topk(HIDE).indices, &quot;random_square&quot;: square}
+            with torch.no_grad():
+                before = torch.softmax(model(batch), dim=1)[0, predicted].item()
+                row = {&quot;path&quot;: data.df.loc[index, &quot;path&quot;], &quot;class_name&quot;: data.df.loc[index, &quot;class_name&quot;],
+                       &quot;hottest_quadrant&quot;: QUADRANTS[np.unravel_index(quarters.argmax(), (2, 2))]}
+                for name, ids in patches.items():
+                    probs = torch.softmax(model(painted(batch, ids)), dim=1)[0]
+                    row[f&quot;drop_{name}&quot;] = before - probs[predicted].item()
+                    row[f&quot;changed_{name}&quot;] = int(probs.argmax().item() != predicted)
+            rows.append(row)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>36-39</td>
+<td>Loads the final model in evaluation mode</td>
+<td>Model</td>
+<td>Same weights</td>
+</tr>
+<tr>
+<td>41-43</td>
+<td>Test set and a fixed random generator (seed 0)</td>
+<td>Seed</td>
+<td>The random squares are the same every run</td>
+</tr>
+<tr>
+<td>45-46</td>
+<td>Loops the first 20 images of each class, one at a time</td>
+<td>Fixed rule</td>
+<td>Reproducible sample</td>
+</tr>
+<tr>
+<td>47</td>
+<td>Grad-CAM for the image</td>
+<td>Grad-CAM</td>
+<td>Heat map used for both checks</td>
+</tr>
+<tr>
+<td>48-52</td>
+<td>Mean heat of each quarter of the map; picks a random 32 x 32 square</td>
+<td>Quarter comparison; random patch</td>
+<td>The quarter check is "where is the heat"; the random square is the third patch</td>
+</tr>
+<tr>
+<td>53</td>
+<td>Indices of the hottest and coldest 1,024 pixels, and the random square</td>
+<td><code>topk</code>, flattening</td>
+<td>Three patches of equal area</td>
+</tr>
+<tr>
+<td>55</td>
+<td>Confidence of the chosen class before hiding</td>
+<td>Confidence</td>
+<td>Baseline</td>
+</tr>
+<tr>
+<td>56-57</td>
+<td>Row with the path, the class and the hottest quarter</td>
+<td>Records</td>
+<td>Feeds the CSV</td>
+</tr>
+<tr>
+<td>58-61</td>
+<td>For each patch: confidence after hiding, the drop, and whether the predicted class changed</td>
+<td>Drop, prediction change</td>
+<td>Two measures: how far confidence falls, and how often the answer flips</td>
+</tr>
+<tr>
+<td>62</td>
+<td>Adds the row</td>
+<td>Records</td>
+<td>One row per image</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">    table = pd.DataFrame(rows)
+    table.to_csv(RESULTS_DIR / &quot;gradcam_sanity_check.csv&quot;, index=False)
+
+    n = len(table)
+    print(f&quot;Images tested: {n}&quot;)
+    print(&quot;Check 1 - hottest quadrant of the Grad-CAM map:&quot;)
+    for name in QUADRANTS.values():
+        count = int((table[&quot;hottest_quadrant&quot;] == name).sum())
+        print(f&quot;  {name:13s} {count:3d}  ({count / n:.0%})&quot;)
+    print(&quot;Check 2 - hide 25% of the pixels:&quot;)
+    for name in (&quot;hottest&quot;, &quot;coldest&quot;, &quot;random_square&quot;):
+        print(f&quot;  {name:14s} mean confidence drop {table[f'drop_{name}'].mean():.3f} | prediction changed for {int(table[f'changed_{name}'].sum())} of {n}&quot;)
+    hot, cold = table[&quot;drop_hottest&quot;], table[&quot;drop_coldest&quot;]
+    print(f&quot;  hottest hurt MORE than coldest for {int((hot &gt; cold).sum())} images, LESS for {int((hot &lt; cold).sum())}&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64-65</td>
+<td>Saves the table to <code>results/gradcam_sanity_check.csv</code></td>
+<td>CSV</td>
+<td>200 rows</td>
+</tr>
+<tr>
+<td>67-72</td>
+<td>Counts the hottest quarter for each of the four quarters</td>
+<td>Counting</td>
+<td>Gives 160 bottom-right, 36 top-right, 4 bottom-left, 0 top-left</td>
+</tr>
+<tr>
+<td>73-75</td>
+<td>Mean drop and number of changed predictions for each patch</td>
+<td>Summary</td>
+<td>0.064 / 14, 0.061 / 14, 0.089 / 17</td>
+</tr>
+<tr>
+<td>76-77</td>
+<td>Counts images where hiding the hottest hurt more than the coldest</td>
+<td>Paired comparison</td>
+<td>109 more, 91 less</td>
+</tr>
+<tr>
+<td>80-81</td>
+<td>Runs <code>main()</code> only when the file is run directly</td>
+<td>Entry point</td>
+<td>Safe to import</td>
+</tr>
+</tbody>
+</table>
+<h3>3.6 <code>src/visualize_tsne.py</code>: features and t-SNE</h3>
+<p>The script has no functions; it runs top to bottom. It takes 1,000 random test images, extracts 1,280 numbers each, and plots a 2-D t-SNE.</p>
+<pre><code class="language-python">&quot;&quot;&quot;visualize_tsne.py - MobileNetV2 feature visualization.&quot;&quot;&quot;
+import os
+
+os.environ[&quot;OPENBLAS_NUM_THREADS&quot;] = &quot;1&quot;
+os.environ[&quot;OMP_NUM_THREADS&quot;] = &quot;1&quot;
+os.environ[&quot;MKL_NUM_THREADS&quot;] = &quot;1&quot;
+import csv
+import random
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+
+from pathlib import Path
+from PIL import Image
+from torchvision import transforms
+from sklearn.manifold import TSNE
+
+from src.models import build_transfer_model
+from src.utils import DATA_DIR, MODELS_DIR, RESULTS_DIR, FIGURES_DIR
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>One-line docstring</td>
+<td>Documentation</td>
+<td></td>
+</tr>
+<tr>
+<td>4-6</td>
+<td>Limits the number of threads for the maths libraries to 1</td>
+<td>Threads</td>
+<td>Stops the maths libraries from fighting each other on a laptop and makes runs more stable. Set before the imports, so it takes effect</td>
+</tr>
+<tr>
+<td>7-16</td>
+<td>Imports</td>
+<td>Libraries</td>
+<td>t-SNE comes from scikit-learn</td>
+</tr>
+<tr>
+<td>18-19</td>
+<td>Model builder and project paths</td>
+<td>Project code</td>
+<td>Same model as the other scripts</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">
+# 1. Device
+device = torch.device(&quot;cpu&quot;)
+
+
+# 2. Load trained model
+model = build_transfer_model(&quot;mobilenet_v2&quot;, freeze=False)
+
+checkpoint = MODELS_DIR / &quot;mobilenet_v2_full_frac1_seed0.pth&quot;
+
+model.load_state_dict(
+    torch.load(checkpoint, map_location=device, weights_only=True)
+)
+
+model.to(device)
+model.eval()
+
+
+# 3. Image preprocessing
+transform = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
+])
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>23</td>
+<td>CPU device</td>
+<td>Device</td>
+<td>Enough for 1,000 images</td>
+</tr>
+<tr>
+<td>27-36</td>
+<td>Builds the model, loads the final weights, sets evaluation mode</td>
+<td>Model</td>
+<td>Same weights as Part E</td>
+</tr>
+<tr>
+<td>40-47</td>
+<td>Same preprocessing as training</td>
+<td>Preprocessing</td>
+<td>Consistency</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">
+# 4. Read test images using Python CSV reader
+split_file = DATA_DIR / &quot;splits.csv&quot;
+
+test_rows = []
+
+with open(split_file, &quot;r&quot;, newline=&quot;&quot;, encoding=&quot;utf-8&quot;) as file:
+    reader = csv.DictReader(file)
+
+    for row in reader:
+        if row[&quot;split&quot;] == &quot;test&quot;:
+            test_rows.append(row)
+
+print(&quot;Total test images:&quot;, len(test_rows))
+
+
+# Randomly select 1000 test images (fixed seed 42)
+random.Random(42).shuffle(test_rows)
+test_rows = test_rows[:1000]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>51</td>
+<td>Path of the split table</td>
+<td>Path</td>
+<td></td>
+</tr>
+<tr>
+<td>55-60</td>
+<td>Reads the rows with Python's csv module and keeps the test rows</td>
+<td>CSV reading</td>
+<td>Avoids pandas here; same result</td>
+</tr>
+<tr>
+<td>62</td>
+<td>Prints the number of test rows (4,050)</td>
+<td>Logging</td>
+<td></td>
+</tr>
+<tr>
+<td>66-67</td>
+<td>Shuffles with seed 42 and keeps 1,000</td>
+<td>Random sample, seed</td>
+<td>Fixed sample. The plan asked for about 2,000 images; the code uses 1,000 (see section 8)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">
+# 5. Extract features
+features_list = []
+labels_list = []
+
+print(&quot;Extracting MobileNet features...&quot;)
+
+with torch.no_grad():
+
+    for i, row in enumerate(test_rows):
+
+        image_path = DATA_DIR / row[&quot;path&quot;]
+
+        image = Image.open(image_path).convert(&quot;RGB&quot;)
+        image_tensor = transform(image).unsqueeze(0).to(device)
+
+        feature_maps = model.features(image_tensor)
+
+        features = torch.nn.functional.adaptive_avg_pool2d(
+            feature_maps, (1, 1)
+        )
+
+        features = features.flatten(1)
+
+        features_list.append(features.cpu().numpy()[0])
+        labels_list.append(int(row[&quot;label&quot;]))
+
+        if (i + 1) % 250 == 0:
+         print(f&quot;Processed {i + 1}/1000 images&quot;)
+
+
+features = np.array(features_list)
+labels = np.array(labels_list)
+
+print(&quot;Feature shape:&quot;, features.shape)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>76</td>
+<td>No gradients</td>
+<td><code>no_grad</code></td>
+<td>Only features are needed</td>
+</tr>
+<tr>
+<td>85</td>
+<td>Runs only the feature part of MobileNetV2 (<code>model.features</code>)</td>
+<td>Features before the classifier</td>
+<td>This is the output of the last convolution block, before dropout and the new 10-class layer. Gives a feature map per image</td>
+</tr>
+<tr>
+<td>87-91</td>
+<td>Averages each map to one number (global average pooling) and flattens</td>
+<td>Global average pooling</td>
+<td>1,280 numbers per image. Could use the 1,000-class ImageNet output instead, which is less specific to our task</td>
+</tr>
+<tr>
+<td>93-94</td>
+<td>Stores the feature vector and the label</td>
+<td>Records</td>
+<td></td>
+</tr>
+<tr>
+<td>96-97</td>
+<td>Progress message every 250 images</td>
+<td>Logging</td>
+<td>Shows that a long run is working</td>
+</tr>
+<tr>
+<td>100-103</td>
+<td>Makes arrays and prints the shape (1000, 1280)</td>
+<td>NumPy</td>
+<td>t-SNE needs an array</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">
+# 6. Run t-SNE
+print(&quot;Running t-SNE. This may take several minutes on CPU...&quot;)
+
+tsne = TSNE(
+    n_components=2,
+    perplexity=30,
+    random_state=42,
+    init=&quot;pca&quot;,
+    learning_rate=&quot;auto&quot;,
+)
+
+embeddings = tsne.fit_transform(features)
+
+print(&quot;t-SNE completed!&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>109-115</td>
+<td>t-SNE: 2 dimensions, perplexity 30, seed 42, PCA start, automatic learning rate</td>
+<td>t-SNE</td>
+<td>Perplexity 30 is the usual default and the plan asked for it. The PCA start and seed make the layout repeatable on the same library version. Could use PCA first to reduce 1,280 to 50 dimensions, which is faster</td>
+</tr>
+<tr>
+<td>117</td>
+<td>Runs t-SNE and gets 2-D points</td>
+<td><code>fit_transform</code></td>
+<td>Takes minutes on a CPU</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">
+# 7. Plot
+class_names = [
+    &quot;AnnualCrop&quot;, &quot;Forest&quot;, &quot;HerbaceousVegetation&quot;,
+    &quot;Highway&quot;, &quot;Industrial&quot;, &quot;Pasture&quot;,
+    &quot;PermanentCrop&quot;, &quot;Residential&quot;, &quot;River&quot;, &quot;SeaLake&quot;
+]
+
+plt.figure(figsize=(12, 9))
+
+for class_id, class_name in enumerate(class_names):
+
+    mask = labels == class_id
+
+    plt.scatter(
+        embeddings[mask, 0],
+        embeddings[mask, 1],
+        label=class_name,
+        s=8,
+        alpha=0.7,
+    )
+
+plt.title(&quot;t-SNE Visualization of MobileNetV2 Features&quot;)
+plt.xlabel(&quot;t-SNE Dimension 1&quot;)
+plt.ylabel(&quot;t-SNE Dimension 2&quot;)
+plt.legend(markerscale=2, fontsize=8)
+plt.tight_layout()
+
+
+# 8. Save
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+output_path = FIGURES_DIR / &quot;mobilenet_v2_tsne.png&quot;
+
+plt.savefig(output_path, dpi=120)
+plt.show()
+
+print(&quot;t-SNE figure saved:&quot;, output_path)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>123-127</td>
+<td>Class names</td>
+<td>Labels</td>
+<td>Colours and legend</td>
+</tr>
+<tr>
+<td>129-141</td>
+<td>One scatter plot per class, small dots, slight transparency</td>
+<td>Scatter plot</td>
+<td>Overlapping classes show as mixed colours</td>
+</tr>
+<tr>
+<td>143-147</td>
+<td>Title, axis labels, legend</td>
+<td>Plot</td>
+<td>The axis numbers have no unit; only their relative positions mean something</td>
+</tr>
+<tr>
+<td>151-155</td>
+<td>Saves the figure before showing it</td>
+<td>Save order</td>
+<td>Saving after <code>plt.show()</code> can write an empty image in some setups; this order is correct</td>
+</tr>
+<tr>
+<td>156</td>
+<td>Opens a window; close it to finish</td>
+<td>Interactive display</td>
+<td>Only for the person running it</td>
+</tr>
+<tr>
+<td>158</td>
+<td>Prints the save path</td>
+<td>Logging</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3>3.7 <code>src/train_part_e.py</code>: seed-4 scratch CNN runs (brief)</h3>
+<p>This is Rohan's extra seed (seed 4) for the scratch CNN, run on the CPU, as the plan says. It re-implements a short training loop with the same settings as the team: batch 64, Adam, learning rate 0.001, up to 20 epochs, best validation epoch kept, the test set scored once.</p>
+<pre><code class="language-python">&quot;&quot;&quot;Memory-efficient Part E scratch CNN seed-4 experiments.&quot;&quot;&quot;
+
+import time
+import numpy as np
+import pandas as pd
+import torch
+from sklearn.metrics import f1_score
+
+from src.dataset import get_loader
+from src.models import build_scratch_cnn
+from src.train import _save_row
+from src.utils import get_device, set_seed, METRICS_CSV
+
+BATCH_SIZE = 64
+EPOCHS = 20
+
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2</td>
+<td>Docstring</td>
+<td>Documentation</td>
+<td></td>
+</tr>
+<tr>
+<td>4-13</td>
+<td>Imports, including <code>_save_row</code> from <code>train.py</code></td>
+<td>Libraries, reuse</td>
+<td>Same CSV writing rule as the shared function</td>
+</tr>
+<tr>
+<td>15-16</td>
+<td>Batch 64, 20 epochs</td>
+<td>Settings</td>
+<td>Same as the team recipe</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">def train_part_e(fraction, seed=4):
+    device = get_device()
+    set_seed(seed)
+
+    train_loader = get_loader(
+        &quot;train&quot;, fraction=fraction, seed=seed,
+        augment=True, batch_size=BATCH_SIZE
+    )
+    val_loader = get_loader(&quot;val&quot;, batch_size=BATCH_SIZE)
+    test_loader = get_loader(&quot;test&quot;, batch_size=BATCH_SIZE)
+
+    model = build_scratch_cnn().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, foreach=False)
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    best_accuracy = -1
+    best_weights = None
+    best_epoch = 0
+    started = time.perf_counter()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>19</td>
+<td>Function takes the fraction (0.05, 0.1, 0.25) and seed 4</td>
+<td>Parameters</td>
+<td></td>
+</tr>
+<tr>
+<td>21</td>
+<td>Sets all seeds</td>
+<td>Seed</td>
+<td>Repeatable run</td>
+</tr>
+<tr>
+<td>23-28</td>
+<td>Training loader with augmentation and fraction; validation and test loaders</td>
+<td>DataLoader</td>
+<td>Augmentation only on training images</td>
+</tr>
+<tr>
+<td>30-32</td>
+<td>Scratch CNN, Adam, cross-entropy</td>
+<td>Model, optimiser, loss</td>
+<td>Adam with <code>foreach=False</code> is the setting Tejash used, so results match</td>
+</tr>
+<tr>
+<td>34-37</td>
+<td>Best accuracy, best weights, best epoch, start time</td>
+<td>Model selection</td>
+<td>Decisions use the validation set only</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">    for epoch in range(1, EPOCHS + 1):
+        model.train()
+        total_loss, correct, seen = 0.0, 0, 0
+
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+
+            optimizer.zero_grad()
+            scores = model(x)
+            loss = loss_fn(scores, y)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(y)
+            correct += (scores.argmax(1) == y).sum().item()
+            seen += len(y)
+
+        model.eval()
+        val_correct, val_seen = 0, 0
+        val_loss = 0.0
+
+        with torch.no_grad():
+            for x, y in val_loader:
+                x, y = x.to(device), y.to(device)
+                scores = model(x)
+                val_loss += loss_fn(scores, y).item() * len(y)
+                val_correct += (scores.argmax(1) == y).sum().item()
+                val_seen += len(y)
+
+        val_accuracy = val_correct / val_seen
+
+        print(
+            f&quot;scratch_cnn | fraction {fraction:g} | seed {seed} | &quot;
+            f&quot;epoch {epoch:02d}/{EPOCHS} | &quot;
+            f&quot;train loss {total_loss/seen:.4f}, &quot;
+            f&quot;acc {correct/seen:.3f} | &quot;
+            f&quot;val loss {val_loss/val_seen:.4f}, &quot;
+            f&quot;acc {val_accuracy:.3f}&quot;
+        )
+
+        if val_accuracy &gt; best_accuracy:
+            best_accuracy = val_accuracy
+            best_epoch = epoch
+            best_weights = {
+                k: v.detach().cpu().clone()
+                for k, v in model.state_dict().items()
+            }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>40-54</td>
+<td>One pass over the training images: forward, loss, backward, step</td>
+<td>Training loop</td>
+<td>The standard recipe</td>
+</tr>
+<tr>
+<td>56-66</td>
+<td>Validation pass without gradients</td>
+<td>Validation</td>
+<td>Chooses the epoch</td>
+</tr>
+<tr>
+<td>68-77</td>
+<td>Prints loss and accuracy for each epoch</td>
+<td>Logging</td>
+<td>Lets us see training curves in the output</td>
+</tr>
+<tr>
+<td>79-85</td>
+<td>Keeps a copy of the best weights</td>
+<td>Early selection</td>
+<td>Copy is on the CPU so memory is not used on the GPU</td>
+</tr>
+</tbody>
+</table>
+<p>Note: the code's <code>__main__</code> block (lines 122-123) runs only the 25% case. The 5% and 10% rows in <code>metrics.csv</code> were produced by calling the same function with other fractions; no saved command for them is in the file.</p>
+<pre><code class="language-python">    model.load_state_dict(best_weights)
+    model.eval()
+
+    actual, predicted = [], []
+
+    with torch.no_grad():
+        for x, y in test_loader:
+            scores = model(x.to(device))
+            predicted.extend(scores.argmax(1).cpu().tolist())
+            actual.extend(y.tolist())
+
+    accuracy = np.mean(np.array(actual) == np.array(predicted))
+    macro_f1 = f1_score(actual, predicted, average=&quot;macro&quot;)
+
+    row = {
+        &quot;model&quot;: &quot;scratch_cnn&quot;,
+        &quot;fraction&quot;: fraction,
+        &quot;seed&quot;: seed,
+        &quot;accuracy&quot;: accuracy,
+        &quot;macro_f1&quot;: macro_f1,
+    }
+
+    _save_row(METRICS_CSV, row)
+
+    seconds = time.perf_counter() - started
+
+    print(
+        f&quot;\nTEST (best epoch {best_epoch}): &quot;
+        f&quot;accuracy {accuracy:.4f}, macro-F1 {macro_f1:.4f} &quot;
+        f&quot;| {seconds/60:.1f} min&quot;
+    )
+
+    return row
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>87-88</td>
+<td>Restores the best weights and switches to evaluation</td>
+<td>Restore</td>
+<td>The test score is for the best epoch, not the last</td>
+</tr>
+<tr>
+<td>92-96</td>
+<td>Scores the test set once</td>
+<td>Test set</td>
+<td>Never used to choose anything</td>
+</tr>
+<tr>
+<td>98-99</td>
+<td>Accuracy and macro-F1</td>
+<td>Metrics</td>
+<td>Same definitions as <code>evaluate.py</code></td>
+</tr>
+<tr>
+<td>101-109</td>
+<td>Builds the row and writes it to <code>metrics.csv</code></td>
+<td>CSV, one row per run</td>
+<td>A rerun replaces its old row (rule in <code>train.py</code>)</td>
+</tr>
+<tr>
+<td>111-117</td>
+<td>Prints the test result and the time</td>
+<td>Logging</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">if __name__ == &quot;__main__&quot;:
+    train_part_e(fraction=0.25, seed=4)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>122-123</td>
+<td>Runs the 25% case with seed 4 when the file is run</td>
+<td>Entry point</td>
+<td>See the note above about 5% and 10%</td>
+</tr>
+</tbody>
+</table>
+<h3>3.8 <code>src/visualize_confusion_examples.py</code>: real examples of confused pairs</h3>
+<pre><code class="language-python">&quot;&quot;&quot;Real examples (first three in the file) of the six most confused class pairs.
+
+Run from the repo folder:  python -m src.visualize_confusion_examples
+&quot;&quot;&quot;
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from PIL import Image
+
+from src.utils import DATA_DIR, FIGURES_DIR, RESULTS_DIR
+
+df = pd.read_csv(RESULTS_DIR / &quot;misclassified_images.csv&quot;)
+
+pairs = [
+    (&quot;AnnualCrop&quot;, &quot;PermanentCrop&quot;),
+    (&quot;AnnualCrop&quot;, &quot;Pasture&quot;),
+    (&quot;HerbaceousVegetation&quot;, &quot;Pasture&quot;),
+    (&quot;HerbaceousVegetation&quot;, &quot;PermanentCrop&quot;),
+    (&quot;Highway&quot;, &quot;River&quot;),
+    (&quot;Pasture&quot;, &quot;AnnualCrop&quot;),
+]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-4</td>
+<td>Docstring: first three examples of the six pairs</td>
+<td>Documentation</td>
+<td></td>
+</tr>
+<tr>
+<td>6-10</td>
+<td>Imports</td>
+<td>Libraries</td>
+<td></td>
+</tr>
+<tr>
+<td>12</td>
+<td>Loads the mistakes list</td>
+<td>CSV</td>
+<td></td>
+</tr>
+<tr>
+<td>14-21</td>
+<td>The six pairs: AnnualCrop-&gt;PermanentCrop, AnnualCrop-&gt;Pasture, HerbaceousVegetation-&gt;Pasture, HerbaceousVegetation-&gt;PermanentCrop, Highway-&gt;River, Pasture-&gt;AnnualCrop</td>
+<td>Fixed list</td>
+<td>These are the top six pairs by count (7, 5, 5, 5, 4, 4). The list is typed in by hand, so if the model changed, it would need updating</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">fig, axes = plt.subplots(6, 3, figsize=(12, 20))
+
+for row, (actual, predicted) in enumerate(pairs):
+    examples = df[
+        (df[&quot;actual_class&quot;] == actual) &amp;
+        (df[&quot;predicted_class&quot;] == predicted)
+    ].head(3)
+
+    for col, (_, item) in enumerate(examples.iterrows()):
+        image_path = DATA_DIR / item[&quot;path&quot;]
+        image = Image.open(image_path).convert(&quot;RGB&quot;)
+
+        axes[row, col].imshow(image)
+        axes[row, col].set_title(
+            f&quot;Actual: {actual}\nPredicted: {predicted}&quot;,
+            fontsize=9
+        )
+        axes[row, col].axis(&quot;off&quot;)
+
+    for col in range(len(examples), 3):
+        axes[row, col].axis(&quot;off&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>23</td>
+<td>Grid of 6 rows and 3 columns</td>
+<td>Subplots</td>
+<td>One row per pair</td>
+</tr>
+<tr>
+<td>25-29</td>
+<td>Picks the first three mistakes of that pair in file order</td>
+<td>Filter, <code>head</code></td>
+<td>Fixed rule, not chosen by eye</td>
+</tr>
+<tr>
+<td>31-40</td>
+<td>Shows each image with the real and the predicted class in its title</td>
+<td>Plot</td>
+<td></td>
+</tr>
+<tr>
+<td>42-43</td>
+<td>Blank panel when a pair has fewer than three examples</td>
+<td>Layout</td>
+<td>Keeps the grid tidy</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">plt.suptitle(
+    &quot;Examples of Most Confused EuroSAT Class Pairs&quot;,
+    fontsize=16
+)
+plt.tight_layout()
+
+output = FIGURES_DIR / &quot;confusion_pair_examples.png&quot;
+output.parent.mkdir(parents=True, exist_ok=True)
+plt.savefig(output, dpi=200, bbox_inches=&quot;tight&quot;)
+plt.close()
+
+print(f&quot;Saved visualization: {output}&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>45-49</td>
+<td>Title and layout</td>
+<td>Plot</td>
+<td></td>
+</tr>
+<tr>
+<td>51-56</td>
+<td>Saves at 200 dpi and prints the path</td>
+<td>Save</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3>3.9 <code>src/visualize_errors.py</code>: grid of mistakes</h3>
+<pre><code class="language-python">
+import pandas as pd
+import matplotlib.pyplot as plt
+from PIL import Image
+
+from src.utils import DATA_DIR, RESULTS_DIR
+
+# Load the incorrect predictions
+df = pd.read_csv(RESULTS_DIR / &quot;misclassified_images.csv&quot;)
+
+# Select 12 incorrect images
+df = df.head(12).reset_index(drop=True)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2-6</td>
+<td>Imports</td>
+<td>Libraries</td>
+<td></td>
+</tr>
+<tr>
+<td>9</td>
+<td>Loads the mistakes list</td>
+<td>CSV</td>
+<td></td>
+</tr>
+<tr>
+<td>12</td>
+<td>Keeps the first 12 mistakes in file order</td>
+<td>Fixed rule</td>
+<td>Not the worst 12, not chosen by eye</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python"># Create a 3-row, 4-column grid
+fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+axes = axes.flatten()
+
+for i, row in df.iterrows():
+
+    # Find the image
+    image_path = DATA_DIR / row[&quot;path&quot;]
+
+    # Open image
+    img = Image.open(image_path).convert(&quot;RGB&quot;)
+
+    # Display image
+    axes[i].imshow(img)
+
+    # Show actual and predicted classes
+    axes[i].set_title(
+        f&quot;Actual: {row['actual_class']}\n&quot;
+        f&quot;Predicted: {row['predicted_class']}&quot;,
+        fontsize=9,
+        pad=8
+    )
+
+    axes[i].axis(&quot;off&quot;)
+
+# Hide unused plots
+for i in range(len(df), len(axes)):
+    axes[i].axis(&quot;off&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>15-16</td>
+<td>A 3 x 4 grid, flattened to a list of 12 panels</td>
+<td>Subplots</td>
+<td></td>
+</tr>
+<tr>
+<td>18-27</td>
+<td>Opens each image and shows it</td>
+<td>Plot</td>
+<td></td>
+</tr>
+<tr>
+<td>30-37</td>
+<td>Title with the real and predicted class</td>
+<td>Labels</td>
+<td></td>
+</tr>
+<tr>
+<td>40-41</td>
+<td>Turns off unused panels</td>
+<td>Layout</td>
+<td>Here all 12 are used</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python"># Improve spacing
+plt.subplots_adjust(
+    hspace=0.35,
+    wspace=0.15,
+    top=0.95,
+    bottom=0.03
+)
+
+# Save the figure
+output_path = RESULTS_DIR / &quot;misclassified_images_grid.png&quot;
+
+plt.savefig(
+    output_path,
+    dpi=120,
+    bbox_inches=&quot;tight&quot;
+)
+
+plt.show()
+
+print(&quot;Image grid saved:&quot;, output_path)
+print(&quot;Images displayed:&quot;, len(df))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>44-49</td>
+<td>Spacing between panels</td>
+<td>Layout</td>
+<td></td>
+</tr>
+<tr>
+<td>52-62</td>
+<td>Saves to <code>results/misclassified_images_grid.png</code> (note: results folder, not figures) and shows it</td>
+<td>Save, display</td>
+<td>The notebook reads it from <code>results/</code></td>
+</tr>
+</tbody>
+</table>
+<h3>3.10 <code>src/visualize_gradcam.py</code>: Grad-CAM for the first four mistakes</h3>
+<p>This script is an older version of the picture in <code>gradcam_all_classes.py</code>. It shows only the first four mistakes, in two columns.</p>
+<pre><code class="language-python">import torch
+import matplotlib.pyplot as plt
+import pandas as pd
+from PIL import Image
+from torchvision import transforms
+
+from src.models import build_transfer_model
+from src.gradcam import grad_cam
+from src.utils import DATA_DIR, MODELS_DIR, RESULTS_DIR
+
+# Device
+device = torch.device(&quot;cpu&quot;)
+
+# Load trained MobileNetV2
+model = build_transfer_model(&quot;mobilenet_v2&quot;, freeze=False)
+
+checkpoint = MODELS_DIR / &quot;mobilenet_v2_full_frac1_seed0.pth&quot;
+model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
+model.to(device)
+model.eval()
+
+# Image preprocessing
+transform = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
+])
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-9</td>
+<td>Imports; uses the same Grad-CAM function</td>
+<td>Reuse</td>
+<td>One Grad-CAM for the whole project</td>
+</tr>
+<tr>
+<td>11-20</td>
+<td>CPU; final MobileNetV2 weights; evaluation mode</td>
+<td>Model</td>
+<td></td>
+</tr>
+<tr>
+<td>22-30</td>
+<td>Same preprocessing as training</td>
+<td>Preprocessing</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python"># Read misclassified images
+df = pd.read_csv(RESULTS_DIR / &quot;misclassified_images.csv&quot;)
+
+# Select first 4 mistakes
+df = df.head(4).reset_index(drop=True)
+
+class_names = [
+    &quot;AnnualCrop&quot;, &quot;Forest&quot;, &quot;HerbaceousVegetation&quot;,
+    &quot;Highway&quot;, &quot;Industrial&quot;, &quot;Pasture&quot;,
+    &quot;PermanentCrop&quot;, &quot;Residential&quot;, &quot;River&quot;, &quot;SeaLake&quot;
+]
+
+fig, axes = plt.subplots(4, 2, figsize=(10, 16))
+
+for i, row in df.iterrows():
+
+    image_path = DATA_DIR / row[&quot;path&quot;]
+    original = Image.open(image_path).convert(&quot;RGB&quot;)
+
+    image_tensor = transform(original).unsqueeze(0).to(device)
+
+    # Generate Grad-CAM
+    heatmap, predicted_class = grad_cam(
+        model,
+        image_tensor,
+        model.features[-1]
+    )
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>33-36</td>
+<td>Loads the mistakes list and keeps the first four</td>
+<td>Fixed rule</td>
+<td></td>
+</tr>
+<tr>
+<td>38-42</td>
+<td>Class names</td>
+<td>Labels</td>
+<td>Defined here but not used later (harmless)</td>
+</tr>
+<tr>
+<td>44</td>
+<td>A 4 x 2 grid</td>
+<td>Subplots</td>
+<td>Picture and heat map</td>
+</tr>
+<tr>
+<td>46-58</td>
+<td>Grad-CAM for each of the four images</td>
+<td>Grad-CAM</td>
+<td>Last layer <code>model.features[-1]</code></td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">    heatmap = heatmap.numpy()
+
+    # Original image
+    axes[i, 0].imshow(original)
+    axes[i, 0].set_title(
+        f&quot;Actual: {row['actual_class']}\n&quot;
+        f&quot;Predicted: {row['predicted_class']}&quot;
+    )
+    axes[i, 0].axis(&quot;off&quot;)
+
+    # Heatmap overlay
+    axes[i, 1].imshow(original)
+    axes[i, 1].imshow(heatmap, cmap=&quot;jet&quot;, alpha=0.5)
+    axes[i, 1].set_title(&quot;Grad-CAM&quot;)
+    axes[i, 1].axis(&quot;off&quot;)
+
+plt.tight_layout()
+
+output_path = RESULTS_DIR / &quot;figures&quot; / &quot;gradcam_examples.png&quot;
+plt.savefig(output_path, dpi=120, bbox_inches=&quot;tight&quot;)
+plt.show()
+
+print(&quot;Grad-CAM figure saved:&quot;, output_path)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>63-68</td>
+<td>Shows the picture with real and predicted class</td>
+<td>Plot</td>
+<td></td>
+</tr>
+<tr>
+<td>71-74</td>
+<td>Shows the heat map on top of the picture at 50% opacity</td>
+<td>Overlay</td>
+<td></td>
+</tr>
+<tr>
+<td>76-82</td>
+<td>Saves to <code>results/figures/gradcam_examples.png</code> and shows it</td>
+<td>Save</td>
+<td>The figure is shown in notebook block 5</td>
+</tr>
+</tbody>
+</table>
+<h3>3.11 <code>notebooks/04_evaluation_and_explainability.ipynb</code>: code blocks</h3>
+<p>The notebook runs from top to bottom and does not retrain anything. Sections 1 to 8 show what the scripts saved. Section 9 (added by Nitin) re-scores the model on the CPU to check the saved files. The code blocks are numbered 1 to 15 in the order they appear. Line numbers count lines inside the block.</p>
+<p><strong>Block 1: load the saved report and matrix (section 1).</strong></p>
+<pre><code class="language-python">from pathlib import Path
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+from IPython.display import display, Image
+
+# Works whether Jupyter starts in the repo folder or in notebooks/.
+project_root = Path.cwd()
+if not (project_root / &quot;src&quot;).is_dir():
+    project_root = project_root.parent
+os.chdir(project_root)
+RESULTS = project_root / &quot;results&quot;
+FIGURES = RESULTS / &quot;figures&quot;
+
+report = pd.read_csv(
+    RESULTS / &quot;mobilenet_v2_full_frac1_seed0_classification_report.csv&quot;,
+    index_col=0
+)
+cm = pd.read_csv(
+    RESULTS / &quot;mobilenet_v2_full_frac1_seed0_confusion_matrix.csv&quot;,
+    index_col=0
+)
+
+print(&quot;Classification Report&quot;)
+display(report)
+
+print(&quot;Confusion Matrix&quot;)
+display(cm)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-5</td>
+<td>Imports</td>
+<td>Libraries</td>
+<td><code>display</code> shows tables nicely in Jupyter</td>
+</tr>
+<tr>
+<td>7-13</td>
+<td>Finds the project folder, whether the notebook opens from the project or from <code>notebooks/</code>, and sets the paths</td>
+<td>Paths</td>
+<td>Lets the notebook run from either folder</td>
+</tr>
+<tr>
+<td>15-22</td>
+<td>Reads the report and the matrix from the CSV files, with the class names as the index</td>
+<td>CSV</td>
+<td>Reads what the scripts saved, so nothing is retrained</td>
+</tr>
+<tr>
+<td>24-28</td>
+<td>Prints both tables</td>
+<td>Display</td>
+<td>The numbers used in the write-up</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 2: draw the confusion matrix (section 2).</strong></p>
+<pre><code class="language-python">plt.figure(figsize=(10, 8))
+plt.imshow(cm.values, cmap=&quot;Blues&quot;)
+plt.colorbar()
+plt.xticks(range(len(cm.columns)), cm.columns, rotation=45, ha=&quot;right&quot;)
+plt.yticks(range(len(cm.index)), cm.index)
+plt.xlabel(&quot;Predicted Class&quot;)
+plt.ylabel(&quot;Actual Class&quot;)
+plt.title(&quot;MobileNetV2 Confusion Matrix&quot;)
+
+for i in range(len(cm.index)):
+    for j in range(len(cm.columns)):
+        plt.text(j, i, cm.iloc[i, j], ha=&quot;center&quot;, va=&quot;center&quot;)
+
+plt.tight_layout()
+plt.show()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-4</td>
+<td>Sets up a 10 x 8 figure with a blue colour map</td>
+<td>Plot</td>
+<td>Same colours as the script</td>
+</tr>
+<tr>
+<td>5-8</td>
+<td>Tick labels and axis titles</td>
+<td>Plot</td>
+<td></td>
+</tr>
+<tr>
+<td>10-12</td>
+<td>Writes each count inside its cell</td>
+<td>Annotation</td>
+<td></td>
+</tr>
+<tr>
+<td>14-15</td>
+<td>Layout and show</td>
+<td>Plot</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 3: show the mistakes grid (section 3).</strong></p>
+<pre><code class="language-python">display(Image(filename=str(RESULTS / &quot;misclassified_images_grid.png&quot;)))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Shows the saved PNG from <code>visualize_errors.py</code></td>
+<td>Display</td>
+<td>Shows the picture, not a new run</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 4: show the pair examples (section 3.1).</strong></p>
+<pre><code class="language-python">display(Image(filename=str(FIGURES / &quot;confusion_pair_examples.png&quot;)))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Shows the saved pair figure</td>
+<td>Display</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 5: show the Grad-CAM examples (section 4).</strong></p>
+<pre><code class="language-python">display(Image(filename=str(FIGURES / &quot;gradcam_examples.png&quot;)))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Shows the saved 2-column Grad-CAM figure</td>
+<td>Display</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 6: show Grad-CAM for all classes (section 4.1).</strong></p>
+<pre><code class="language-python">display(Image(filename=str(FIGURES / &quot;gradcam_all_classes.png&quot;)))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Shows the saved all-classes figure</td>
+<td>Display</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 7: confidence-drop table and picture (section 5).</strong></p>
+<pre><code class="language-python">confidence = pd.read_csv(RESULTS / &quot;gradcam_confidence_drop.csv&quot;)
+display(confidence.head())
+print(&quot;Number of evaluated images:&quot;, len(confidence))
+display(Image(filename=str(FIGURES / &quot;gradcam_confidence_drop.png&quot;)))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-2</td>
+<td>Reads the 50-row CSV and shows the first five</td>
+<td>Pandas</td>
+<td>The first five show that one drop is negative</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Prints 50</td>
+<td>Count check</td>
+<td></td>
+</tr>
+<tr>
+<td>4</td>
+<td>Shows the bar chart</td>
+<td>Display</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 8: control summary (section 5.1).</strong></p>
+<pre><code class="language-python">check = pd.read_csv(RESULTS / 'gradcam_sanity_check.csv')
+summary = pd.DataFrame({
+    'mean confidence drop': [check[f'drop_{n}'].mean() for n in ('hottest', 'coldest', 'random_square')],
+    'prediction changed (of %d)' % len(check): [int(check[f'changed_{n}'].sum()) for n in ('hottest', 'coldest', 'random_square')],
+}, index=['hottest 25%', 'coldest 25%', 'random 32 x 32 square']).round(3)
+display(summary)
+print('Hottest quarter of the heat map:')
+print(check['hottest_quadrant'].value_counts().to_string())
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Reads the 200-row control CSV</td>
+<td>CSV</td>
+<td></td>
+</tr>
+<tr>
+<td>2-7</td>
+<td>Builds a small table: mean drop and changed predictions for the three patches</td>
+<td>DataFrame</td>
+<td>Same numbers as section 3.5</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Shows the table</td>
+<td>Display</td>
+<td></td>
+</tr>
+<tr>
+<td>9-11</td>
+<td>Prints the count of hottest quarters</td>
+<td>Counting</td>
+<td>160, 36, 4</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 9: t-SNE picture (section 6).</strong></p>
+<pre><code class="language-python">display(Image(filename=str(FIGURES / &quot;mobilenet_v2_tsne.png&quot;)))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Shows the saved t-SNE figure</td>
+<td>Display</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 10: seed-4 rows (section 7).</strong></p>
+<pre><code class="language-python">metrics = pd.read_csv(RESULTS / &quot;metrics.csv&quot;)
+display(metrics[metrics[&quot;seed&quot;] == 4])
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-2</td>
+<td>Reads <code>metrics.csv</code> and shows the rows with seed 4</td>
+<td>Filter</td>
+<td>Three rows: 5%, 10%, 25%. Note these are the stored values; the notebook does not run anything</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 11: re-score the model on the CPU (section 9).</strong></p>
+<pre><code class="language-python">import sys
+
+import numpy as np
+import torch
+from PIL import Image
+
+sys.path.insert(0, str(project_root))
+from src.dataset import EuroSATDataset
+from src.train import build_model
+from src.utils import DATA_DIR, MODELS_DIR
+
+RUN = 'mobilenet_v2_full_frac1_seed0'
+CLASSES = ['AnnualCrop', 'Forest', 'HerbaceousVegetation', 'Highway', 'Industrial',
+           'Pasture', 'PermanentCrop', 'Residential', 'River', 'SeaLake']
+
+model, _ = build_model('mobilenet_v2_full')
+model.load_state_dict(torch.load(MODELS_DIR / f'{RUN}.pth', map_location='cpu', weights_only=True))   # weights_only: safe loading
+model.eval()
+
+test_set = EuroSATDataset('test')
+test_df = test_set.df
+labels = test_df['label'].to_numpy()
+
+probabilities = []
+with torch.no_grad():
+    for start in range(0, len(test_set), 256):
+        batch = torch.stack([test_set[i][0] for i in range(start, min(start + 256, len(test_set)))])
+        probabilities.append(torch.softmax(model(batch), dim=1))
+probabilities = torch.cat(probabilities).numpy()
+predictions = probabilities.argmax(axis=1)
+top_prob = probabilities.max(axis=1)
+
+mine = pd.crosstab(pd.Series(labels, name='actual'), pd.Series(predictions, name='predicted')).reindex(
+    index=range(10), columns=range(10), fill_value=0).to_numpy()
+print(f'Correct on this run: {int((predictions == labels).sum())} of {len(labels)}  (Rohan saved {int(np.trace(cm.values))})')
+print(f'Cells that differ from his saved matrix (sum of absolute differences): {int(np.abs(mine - cm.values).sum())}')
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-10</td>
+<td>Imports; adds the project folder to the import path; imports the dataset, model and paths</td>
+<td>Imports</td>
+<td></td>
+</tr>
+<tr>
+<td>12-14</td>
+<td>The run name and the class names</td>
+<td>Labels</td>
+<td></td>
+</tr>
+<tr>
+<td>16-18</td>
+<td>Builds the model, loads the final weights, evaluation mode</td>
+<td>Model</td>
+<td><code>weights_only=True</code> for safe loading</td>
+</tr>
+<tr>
+<td>20-22</td>
+<td>Test set, its table and labels</td>
+<td>Test set</td>
+<td></td>
+</tr>
+<tr>
+<td>24-31</td>
+<td>Loops in batches of 256 to get the softmax probabilities; takes the argmax and the top probability</td>
+<td>Softmax, confidence</td>
+<td>The probability of the chosen class is the confidence</td>
+</tr>
+<tr>
+<td>33-34</td>
+<td>Builds a 10 x 10 table from the new predictions</td>
+<td>Confusion matrix</td>
+<td>Built the same way as the saved one</td>
+</tr>
+<tr>
+<td>35-36</td>
+<td>Compares: 3,981 correct, and a difference of 0 cells from the saved matrix</td>
+<td>Reproduction check</td>
+<td>Shows the saved matrix is reproduced exactly on this run</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 12: per-class table sorted by recall (section 9.1).</strong></p>
+<pre><code class="language-python">per_class = report.loc[CLASSES, ['precision', 'recall', 'f1-score', 'support']].copy()
+per_class['support'] = per_class['support'].astype(int)
+per_class.sort_values('recall').round(3)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Keeps the four columns for the 10 classes in the class order</td>
+<td>Selection</td>
+<td></td>
+</tr>
+<tr>
+<td>2</td>
+<td>Turns support into whole numbers</td>
+<td>Types</td>
+<td></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Sorts by recall, rounds to 3 decimals</td>
+<td>Sorting</td>
+<td>Sorting by recall puts PermanentCrop first, which is the weakest. Note the sort is written in the block but the display shows the result</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 13: most confused pairs (section 9.2).</strong></p>
+<pre><code class="language-python">pairs = sorted(((int(cm.loc[a, p]), a, p) for a in CLASSES for p in CLASSES if a != p and cm.loc[a, p] &gt; 0),
+               key=lambda t: (-t[0], t[1], t[2]))
+mistakes_total = sum(t[0] for t in pairs)
+print(f'{len(pairs)} different (actual -&gt; predicted) pairs happened, {mistakes_total} mistakes in total.\n')
+for count, actual, predicted in pairs[:8]:
+    print(f'  {count} x {actual:22s} -&gt; {predicted}')
+
+crops = {'AnnualCrop', 'PermanentCrop', 'Pasture', 'HerbaceousVegetation'}
+inside = sum(t[0] for t in pairs if t[1] in crops and t[2] in crops)
+print(f'\nThe 6 biggest pairs are {sum(t[0] for t in pairs[:6])} of {mistakes_total} mistakes.')
+print(f'Both the real and the predicted class are crop or vegetation classes: {inside} of {mistakes_total} ({inside / mistakes_total:.0%}).')
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-2</td>
+<td>Lists every (count, actual, predicted) where the count is above zero, sorted by count</td>
+<td>Sorting</td>
+<td>Gives 29 pairs</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Total mistakes: 69</td>
+<td>Sum</td>
+<td></td>
+</tr>
+<tr>
+<td>4-6</td>
+<td>Prints the top eight pairs</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>8-9</td>
+<td>Counts mistakes where both classes are crop or vegetation classes</td>
+<td>Set membership</td>
+<td>36 of 69</td>
+</tr>
+<tr>
+<td>10-11</td>
+<td>Prints the top six total (30 of 69) and the crop share (52%)</td>
+<td>Output</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 14: real examples with confidence (section 9.3).</strong></p>
+<pre><code class="language-python">mistakes = pd.read_csv(RESULTS / 'misclassified_images.csv')
+row_of_path = {p: i for i, p in enumerate(test_df['path'])}
+top_pairs = pairs[:6]
+
+fig, axes = plt.subplots(len(top_pairs), 4, figsize=(10, 2.7 * len(top_pairs)))
+for r, (count, actual, predicted) in enumerate(top_pairs):
+    chosen = mistakes[(mistakes['actual_class'] == actual) &amp; (mistakes['predicted_class'] == predicted)].head(4)
+    for c in range(4):
+        ax = axes[r, c]
+        ax.axis('off')
+        if c &lt; len(chosen):
+            row = chosen.iloc[c]
+            ax.imshow(Image.open(DATA_DIR / row['path']).convert('RGB'))
+            ax.set_title(f&quot;{top_prob[row_of_path[row['path']]]:.0%} sure&quot;, fontsize=9)
+    axes[r, 0].text(-0.08, 0.5, f'{count} x {actual}\n-&gt; {predicted}', transform=axes[r, 0].transAxes, ha='right', va='center', fontsize=9)
+fig.suptitle('Most confused pairs: real mistakes (first four of each pair)', y=0.995)
+fig.tight_layout()
+fig.savefig(FIGURES / 'most_confused_pairs.png', dpi=110, bbox_inches='tight')
+plt.show()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-3</td>
+<td>Mistake list, row number of each path, the top six pairs</td>
+<td>Lookup</td>
+<td></td>
+</tr>
+<tr>
+<td>5-8</td>
+<td>A grid: six rows of four panels</td>
+<td>Subplots</td>
+<td></td>
+</tr>
+<tr>
+<td>9-11</td>
+<td>Takes the first four mistakes of each pair and leaves the rest of the row blank</td>
+<td>Fixed rule</td>
+<td>"First four in file order"</td>
+</tr>
+<tr>
+<td>12-14</td>
+<td>Shows each image with its confidence in the title</td>
+<td>Confidence</td>
+<td>Shows how sure the model was of its wrong answer</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Writes the pair name on the left</td>
+<td>Labels</td>
+<td></td>
+</tr>
+<tr>
+<td>16-19</td>
+<td>Title, layout, saves <code>most_confused_pairs.png</code>, shows it</td>
+<td>Save</td>
+<td>The figure is the one in <code>results/figures/</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block 15: is the model unsure when it is wrong? (section 9.4).</strong></p>
+<pre><code class="language-python">wrong = predictions != labels
+print(f'Mean confidence when right: {top_prob[~wrong].mean():.3f}   (median {np.median(top_prob[~wrong]):.3f})')
+print(f'Mean confidence when wrong: {top_prob[wrong].mean():.3f}   (median {np.median(top_prob[wrong]):.3f})')
+for limit in (0.6, 0.8, 0.9):
+    print(f'Mistakes below {limit:.0%} confidence: {int((top_prob[wrong] &lt; limit).sum())} of {int(wrong.sum())}'
+          f'   | correct answers below {limit:.0%}: {int((top_prob[~wrong] &lt; limit).sum())} of {int((~wrong).sum())}')
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Finds the wrong predictions</td>
+<td>Boolean</td>
+<td></td>
+</tr>
+<tr>
+<td>2-3</td>
+<td>Mean and median confidence, right and wrong</td>
+<td>Summary</td>
+<td>0.990 (median 1.000) when right; 0.763 (median 0.772) when wrong</td>
+</tr>
+<tr>
+<td>4-6</td>
+<td>For limits 60%, 80%, 90%: how many mistakes and how many correct answers fall below</td>
+<td>Threshold analysis</td>
+<td>At 80%: 39 of 69 mistakes, but also 60 of 3,981 correct answers</td>
+</tr>
+</tbody>
+</table>
+<h2>4. How Grad-CAM works, step by step</h2>
+<p>Grad-CAM answers: which places in the last feature map made the chosen class score go up? It needs one forward pass, one backward pass and two hooks.</p>
+<ol>
+<li><strong>Forward pass.</strong> The tile goes through MobileNetV2. The forward hook on <code>model.features[-1]</code> keeps the activations <code>A^k</code> (1,280 maps of 2 x 2 for our 64 x 64 input, because the network divides the size by 32).</li>
+<li><strong>Score.</strong> Take the score of the chosen class (the logit, before softmax), <code>y^c</code>.</li>
+<li><strong>Backward pass.</strong> <code>score.backward()</code> gives the gradient <code>dy^c / dA^k</code> at every position of every map. The backward hook keeps these.</li>
+<li><strong>Weights (alpha).</strong> For each map k, average the gradient over the positions:</li>
+</ol>
+<p><code>alpha_k^c = (1 / Z) x sum over i and j of (dy^c / dA^k_ij)</code></p>
+<p>where Z = number of positions = 2 x 2 = 4. In the code this is <code>gradients.mean(dim=(2, 3))</code>. A large alpha means: making this map stronger would raise the class score a lot.
+5. <strong>Weighted sum and ReLU.</strong> Combine the maps and keep only positive values:</p>
+<p><code>L^c = ReLU( sum over k of alpha_k^c x A^k )</code></p>
+<p>The ReLU keeps the regions that support the class. Negative regions are dropped.
+6. <strong>Resize.</strong> Bilinear interpolation stretches the 2 x 2 map to 64 x 64.
+7. <strong>Normalise.</strong> Subtract the minimum and divide by the maximum, so the map runs from 0 to 1.
+8. <strong>Overlay.</strong> Draw the map in "jet" colours on the image, semi-transparent.</p>
+<p><strong>Why the last convolution layer?</strong> It is the deepest layer that still has spatial positions. Deeper layers know more about the class, but after global average pooling the position is gone. Earlier layers have finer grids (for a 64 x 64 input, the earlier blocks have 16 x 16, 8 x 8 and 4 x 4 positions) but respond to simpler things like edges. The last block is the best trade-off for "what" and "where", but on 64 x 64 tiles it only has 2 x 2 positions, which is why our maps are coarse.</p>
+<p><strong>What Grad-CAM is not.</strong> It is one method, one layer, one image. It does not prove what the model "thinks". Our control (section 6) found the heat maps do not single out a more important area on this model.</p>
+<h2>5. The mistakes: which classes are confused and why</h2>
+<p><strong>Overall.</strong> 69 of 4,050 test tiles are wrong (1.7%). The test set has 450 images of most classes and 300 of Pasture, so accuracy and macro-F1 are close here (98.30% and 98.20%).</p>
+<p><strong>Per class</strong> (from the classification report, the CPU re-scoring of section 9.1 gives the same numbers):</p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th style="text-align: right;">Precision</th>
+<th style="text-align: right;">Recall</th>
+<th style="text-align: right;">F1</th>
+<th style="text-align: right;">Support</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PermanentCrop</td>
+<td style="text-align: right;">0.968</td>
+<td style="text-align: right;">0.960</td>
+<td style="text-align: right;">0.964</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>AnnualCrop</td>
+<td style="text-align: right;">0.982</td>
+<td style="text-align: right;">0.971</td>
+<td style="text-align: right;">0.977</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>HerbaceousVegetation</td>
+<td style="text-align: right;">0.987</td>
+<td style="text-align: right;">0.976</td>
+<td style="text-align: right;">0.981</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>Pasture</td>
+<td style="text-align: right;">0.951</td>
+<td style="text-align: right;">0.977</td>
+<td style="text-align: right;">0.964</td>
+<td style="text-align: right;">300</td>
+</tr>
+<tr>
+<td>Highway</td>
+<td style="text-align: right;">0.973</td>
+<td style="text-align: right;">0.979</td>
+<td style="text-align: right;">0.976</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>Industrial</td>
+<td style="text-align: right;">0.989</td>
+<td style="text-align: right;">0.981</td>
+<td style="text-align: right;">0.985</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>River</td>
+<td style="text-align: right;">0.989</td>
+<td style="text-align: right;">0.987</td>
+<td style="text-align: right;">0.988</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>Residential</td>
+<td style="text-align: right;">0.989</td>
+<td style="text-align: right;">0.996</td>
+<td style="text-align: right;">0.992</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>Forest</td>
+<td style="text-align: right;">0.993</td>
+<td style="text-align: right;">0.998</td>
+<td style="text-align: right;">0.996</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>SeaLake</td>
+<td style="text-align: right;">0.996</td>
+<td style="text-align: right;">1.000</td>
+<td style="text-align: right;">0.998</td>
+<td style="text-align: right;">450</td>
+</tr>
+</tbody>
+</table>
+<p>PermanentCrop has the lowest recall (0.960: 15 of 375 missed). Pasture has the lowest precision (0.951): other green classes are called Pasture more often than Pasture is missed. SeaLake, Forest and Residential are almost perfect.</p>
+<p><strong>Where the 69 mistakes go.</strong> The 29 different (actual -&gt; predicted) pairs that happened are led by these:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">Mistakes</th>
+<th>Actual</th>
+<th>Predicted as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">7</td>
+<td>AnnualCrop</td>
+<td>PermanentCrop</td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td>AnnualCrop</td>
+<td>Pasture</td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td>HerbaceousVegetation</td>
+<td>Pasture</td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td>HerbaceousVegetation</td>
+<td>PermanentCrop</td>
+</tr>
+<tr>
+<td style="text-align: right;">4</td>
+<td>Highway</td>
+<td>River</td>
+</tr>
+<tr>
+<td style="text-align: right;">4</td>
+<td>Pasture</td>
+<td>AnnualCrop</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>The crop and vegetation group.</strong> 36 of the 69 mistakes (52%) are between AnnualCrop, PermanentCrop, Pasture and HerbaceousVegetation (checked against the matrix: 12 from AnnualCrop, 10 from HerbaceousVegetation, 5 from Pasture, 9 from PermanentCrop). Four classes that look alike from above make half of all mistakes.</li>
+<li><strong>AnnualCrop against PermanentCrop.</strong> The largest single pair, 7 images. The brief expected this pair, and our data confirms it, but it is not the only one.</li>
+<li><strong>Highway against River.</strong> Highway -&gt; River 4 and River -&gt; Highway 3, so 7 mistakes in total between these two. The plan expected this pair too; our data shows it as a real but smaller confusion, not the biggest one.</li>
+<li><strong>Pasture.</strong> Involved in three of the six largest pairs.</li>
+</ul>
+<p><strong>What the examples show.</strong> The figure <code>results/figures/most_confused_pairs.png</code> shows the first four real mistakes of each of the six largest pairs, with the model's confidence in its wrong answer. What I can see in it:</p>
+<ul>
+<li>AnnualCrop called PermanentCrop: bright, dry-looking ploughed fields with field boundaries and tracks. The model is only 61 to 79% sure. These are the hardest and least confident examples.</li>
+<li>AnnualCrop called Pasture: dark green, uniform fields with faint boundaries. Several are 64 to 78% sure, one is 100% sure.</li>
+<li>HerbaceousVegetation called Pasture or PermanentCrop: mixed, patchy vegetation, some bare ground. Confidence ranges from 54% to 99%.</li>
+<li>Highway called River: here the road sits next to water or a river, and both are in the tile, so the label is partly a matter of which feature is dominant. Confidence 50 to 92%.</li>
+<li>Pasture called AnnualCrop: green fields with thin lines between them. 53 to 88% sure.</li>
+</ul>
+<p>Possible reasons, which we did not test: at 64 x 64 pixels (about 10 m per pixel) the difference between a ploughed field and a grass field is mostly fine texture; some tiles really are ambiguous; and the random split can put neighbouring patches of one field in both training and test. These are guesses from looking at pictures, and the notebook says so.</p>
+<p><strong>Confidence.</strong> The model is 99.0% sure on average when it is right and 76.3% sure when it is wrong (CPU re-scoring, section 9.4). A rule "send to a person when under 80% sure" would catch 39 of 69 mistakes but also flag 60 of 3,981 correct answers. The threshold was looked at on the test set, so it is an illustration, not a tuned rule. The main lesson is that mistakes are not always unsure: 56 of 69 were below 90%, but the model still gives a high probability to its wrong answer in many cases.</p>
+<h2>6. What the Grad-CAM control showed</h2>
+<p><strong>The first test (confidence drop).</strong> For 50 correctly classified test images we hid the hottest 20% of pixels (set to the ImageNet average colour) and measured the confidence of the true class.</p>
+<ul>
+<li>Average confidence before: 97.72%. After: 96.64%. Average drop: 1.08 points (0.0108).</li>
+<li>In 10 of the 50 images the model became more confident after hiding the "hot" area.</li>
+<li>A second laptop re-run gave 0.61 points on the same 50 images (as recorded in <code>results/part_e_analysis.md</code>; that value is not in the saved CSV).</li>
+</ul>
+<p>On its own this looks like "the hot area matters a little". It does not show that, because nothing was compared with it.</p>
+<p><strong>The control (<code>gradcam_sanity_check.py</code>).</strong> For 200 test images, three patches of 25% of the pixels were hidden in turn: the hottest 25%, the coldest 25%, and a random 32 x 32 square.</p>
+<table>
+<thead>
+<tr>
+<th>Patch hidden</th>
+<th style="text-align: right;">Mean confidence drop</th>
+<th style="text-align: right;">Prediction changed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hottest 25% (Grad-CAM)</td>
+<td style="text-align: right;">0.064</td>
+<td style="text-align: right;">14 of 200</td>
+</tr>
+<tr>
+<td>Coldest 25% (Grad-CAM)</td>
+<td style="text-align: right;">0.061</td>
+<td style="text-align: right;">14 of 200</td>
+</tr>
+<tr>
+<td>Random 32 x 32 square</td>
+<td style="text-align: right;">0.089</td>
+<td style="text-align: right;">17 of 200</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>Hiding the hottest area hurt more for 109 images and less for 91.</li>
+<li>Hottest minus coldest, paired on the same 200 images: mean difference 0.003, standard error 0.017, p = 0.87 (my own paired t-test on the saved CSV; not in the repo). This is no difference at all.</li>
+<li>The random square did slightly more damage than the hottest patch (paired p = 0.08, not significant at 5%).</li>
+<li>The medians are very small (hottest 0.0008, coldest 0.0002, random 0.0014): most patches barely change the confidence. The means are driven by a few images with big drops.</li>
+</ul>
+<p><strong>Where the heat is.</strong> The hottest quarter of the 2 x 2 map was the bottom-right in 160 of 200 images (80%), the top-right in 36, the bottom-left in 4 and the top-left in none. The same lower-right pattern can be seen in <code>gradcam_all_classes.png</code>: the heat is in the lower-right for many images whatever the content.</p>
+<p><strong>What this shows.</strong> On this model and at this size, the Grad-CAM heat map does not identify a part of the tile that matters more than the rest. Hiding the hottest area does no more harm than hiding the coldest, so the heat maps are not evidence of what the model uses. It also shows the maps mostly show a position (bottom-right) rather than the content of the image.</p>
+<p><strong>What this does NOT prove.</strong></p>
+<ul>
+<li>It does not prove Grad-CAM is useless in general. It is one method, on one model, one layer, one image size.</li>
+<li>It does not prove the model ignores the image content. Our guess that the model uses texture spread over the tile is not tested.</li>
+<li>The patch is a solid colour, which is unnatural and can itself change the model's output in ways unrelated to importance. The first version of the control used scattered random pixels; it was dropped because scattered noise damages an image far more than one solid patch, so that comparison was unfair.</li>
+<li>The confidence is very close to 1 for most correct images (mean 0.98), so there is little room for a drop. A ceiling effect can hide a real difference.</li>
+<li>The top-k "hottest" pixels form an irregular blob, while the random patch is a square. The shapes differ, so the comparison is not perfectly fair either.</li>
+<li>200 images, one seed, one model.</li>
+</ul>
+<p><strong>Ideas not tried</strong> (also in the notebook): Grad-CAM on an earlier block with a finer grid, or enlarging the tile before Grad-CAM, and a control with other fill colours.</p>
+<h2>7. What t-SNE shows and what it does not show</h2>
+<p>The plot <code>results/figures/mobilenet_v2_tsne.png</code> uses 1,000 random test images, each as the 1,280 numbers after global average pooling, reduced to 2 dimensions with perplexity 30.</p>
+<p><strong>What it shows.</strong></p>
+<ul>
+<li>Ten groups, one per class. Each group is a compact region. The features of unseen test images are organised by class even though t-SNE was never told the labels. It only uses the features; the colours are added afterwards.</li>
+<li>PermanentCrop (pink) sits in the middle, between HerbaceousVegetation (green, above) and AnnualCrop (blue, below), with a few points at the edge. This is the picture of the 7 + 5 mistakes in the confusion matrix.</li>
+<li>Pasture (brown) is a separate group next to HerbaceousVegetation and PermanentCrop.</li>
+<li>Highway (red) and River (yellow) are separate groups, far apart from each other.</li>
+<li>Residential (grey) and Industrial (purple) are close on the left, with a few grey points at the edge of the purple group. Matches the Industrial -&gt; Residential and Residential -&gt; Industrial mistakes.</li>
+<li>SeaLake (cyan) is separate, with a small sub-group at the bottom.</li>
+</ul>
+<p><strong>What it does not show.</strong></p>
+<ul>
+<li>It does not show how far apart two groups really are. Distances between groups on a t-SNE plot have no meaning, and neither do the sizes of the groups.</li>
+<li>It does not show accuracy. Points inside a group can still be wrong, and a mistake can sit in the middle of the right group.</li>
+<li>It does not show the model's decision boundary. The 10-class layer that decides is not in the plot.</li>
+<li>The picture depends on the settings. Another perplexity or seed would give a different layout. We used one seed (42) and one perplexity (30).</li>
+<li>Our sample is 1,000 images, not the 2,000 in the plan. The plan's number was not used in the code, the notebook or the report (see section 8).</li>
+<li>The model was trained on these classes, so clean groups are expected. The useful point is that unseen test images still group well.</li>
+</ul>
+<h2>8. Numbers you must know</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Value</th>
+<th>Where it comes from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Test images</td>
+<td>4,050</td>
+<td><code>classification_report.csv</code> (support total)</td>
+</tr>
+<tr>
+<td>Correct / wrong</td>
+<td>3,981 / 69</td>
+<td><code>misclassified_images.csv</code>, confusion matrix</td>
+</tr>
+<tr>
+<td>Accuracy (CPU re-scoring, log and analysis)</td>
+<td>98.30%</td>
+<td><code>part_e_analysis.md</code>, notebook</td>
+</tr>
+<tr>
+<td>Accuracy (GPU run, the official number in <code>metrics.csv</code>)</td>
+<td>98.27%</td>
+<td><code>metrics.csv</code>, seed 0. The GPU run gives 3,980 right, the CPU run 3,981: one image apart</td>
+</tr>
+<tr>
+<td>Macro-F1 (CPU report)</td>
+<td>98.20% (0.9820)</td>
+<td>classification report</td>
+</tr>
+<tr>
+<td>Macro-F1 (<code>metrics.csv</code>)</td>
+<td>98.18%</td>
+<td><code>metrics.csv</code></td>
+</tr>
+<tr>
+<td>PermanentCrop recall (lowest)</td>
+<td>0.960 (360 of 375)</td>
+<td>classification report</td>
+</tr>
+<tr>
+<td>Pasture precision (lowest)</td>
+<td>0.951</td>
+<td>classification report</td>
+</tr>
+<tr>
+<td>Mistakes between the four crop/vegetation classes</td>
+<td>36 of 69 (52%)</td>
+<td>confusion matrix</td>
+</tr>
+<tr>
+<td>Biggest pair</td>
+<td>AnnualCrop -&gt; PermanentCrop, 7</td>
+<td>confusion matrix</td>
+</tr>
+<tr>
+<td>Highway -&gt; River / River -&gt; Highway</td>
+<td>4 / 3</td>
+<td>confusion matrix</td>
+</tr>
+<tr>
+<td>Mean confidence right / wrong</td>
+<td>0.990 / 0.763</td>
+<td>notebook section 9.4</td>
+</tr>
+<tr>
+<td>Confidence-drop test</td>
+<td>50 images, 97.72% -&gt; 96.64%, drop 1.08 points</td>
+<td><code>gradcam_confidence_drop.csv</code></td>
+</tr>
+<tr>
+<td>Confidence-drop re-run on second laptop</td>
+<td>0.61 points</td>
+<td><code>part_e_analysis.md</code> only (not saved in CSV)</td>
+</tr>
+<tr>
+<td>Control: hottest / coldest / random drop</td>
+<td>0.064 / 0.061 / 0.089</td>
+<td><code>gradcam_sanity_check.csv</code> (200 images)</td>
+</tr>
+<tr>
+<td>Control: prediction changed</td>
+<td>14 / 14 / 17 of 200</td>
+<td>same</td>
+</tr>
+<tr>
+<td>Control: hottest vs coldest</td>
+<td>109 more, 91 less</td>
+<td>same</td>
+</tr>
+<tr>
+<td>Hottest quarter of heat map</td>
+<td>bottom-right 160 (80%), top-right 36, bottom-left 4, top-left 0</td>
+<td>same</td>
+</tr>
+<tr>
+<td>Grad-CAM map size</td>
+<td>2 x 2 cells, stretched to 64 x 64</td>
+<td>MobileNetV2 last block, stride 32</td>
+</tr>
+<tr>
+<td>t-SNE sample</td>
+<td>1,000 test images, seed 42, perplexity 30</td>
+<td><code>visualize_tsne.py</code></td>
+</tr>
+<tr>
+<td>t-SNE feature size</td>
+<td>1,280</td>
+<td><code>model.features</code> plus global average pooling</td>
+</tr>
+<tr>
+<td>Seed 4, scratch CNN, 5%</td>
+<td>74.69% accuracy, 73.96% macro-F1</td>
+<td><code>metrics.csv</code></td>
+</tr>
+<tr>
+<td>Seed 4, scratch CNN, 10%</td>
+<td>81.68% / 80.92%</td>
+<td><code>metrics.csv</code></td>
+</tr>
+<tr>
+<td>Seed 4, scratch CNN, 25%</td>
+<td>87.43% / 86.81%</td>
+<td><code>metrics.csv</code></td>
+</tr>
+<tr>
+<td>Seed 4, re-run on second laptop, 5% (CPU)</td>
+<td>74.44%</td>
+<td><code>part_e_analysis.md</code> only</td>
+</tr>
+<tr>
+<td>Seed 4, shared GPU training function, 5 / 10 / 25%</td>
+<td>78.62 / 81.46 / 85.31%</td>
+<td><code>part_e_analysis.md</code> only (not in <code>metrics.csv</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Things I must say honestly in the viva.</strong></p>
+<ul>
+<li>The plan asked for about 2,000 t-SNE images; the code and all the write-ups use 1,000.</li>
+<li>The plan asked for Grad-CAM on ResNet-18 as well; all Grad-CAM files use MobileNetV2 only.</li>
+<li>Two numbers for the same model: 98.30% (CPU) and 98.27% (GPU). Say which one is which.</li>
+<li>The control was written by Nitin, not by Rohan.</li>
+<li>The comment in <code>gradcam_sanity_check.py</code> about "average colour of the training data" is wrong; it is the ImageNet average.</li>
+<li><code>train_part_e.py</code> runs only the 25% case in its main block.</li>
+<li>The Highway -&gt; River example is a visual guess, not a tested reason.</li>
+</ul></body></html>

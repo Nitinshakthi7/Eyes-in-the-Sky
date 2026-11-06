@@ -159,7 +159,7 @@ then open a notebook from `notebooks/`. They already contain their results, so y
 
 ### Train one model yourself
 
-Every experiment goes through one function, `train(model_name, fraction, seed)`:
+Most experiments go through one function, `train(model_name, fraction, seed)`. (Two exceptions: Tejash's Part B notebook 02 uses its own older training helper, and Rohan's three seed-4 runs came from his own script `src/train_part_e.py`. Both follow the same recipe.)
 
 ```
 python -c "from src.train import train; train('mobilenet_v2_full', 1.0, 0)"
@@ -205,7 +205,7 @@ Sends a real test image to every model that has weights and checks the three API
 
 ## 4. How it works
 
-**Data.** EuroSAT RGB, loaded with torchvision: 27,000 tiles of 64 x 64 pixels. `src/dataset.py` makes one **fixed, stratified 70/15/15 split** (seed 42): 18,900 train, 4,050 validation, 4,050 test, saved in `data/splits.csv` so everyone uses the same images. The code checks that no image appears in two splits (also by file fingerprint).
+**Data.** EuroSAT RGB, loaded with torchvision: 27,000 tiles of 64 x 64 pixels. `src/dataset.py` makes one **fixed, stratified 70/15/15 split** (seed 42): 18,900 train, 4,050 validation, 4,050 test, saved in `data/splits.csv` so everyone uses the same images. The split code checks the sizes, that no image path is in two splits and that every split keeps the class shares; notebook 01 also compares file fingerprints (MD5) to catch identical images saved under different names.
 
 **Preprocessing.** Every model gets the same input: pixels scaled to 0 to 1 and normalised with the ImageNet mean and standard deviation. For training only, we use label-safe augmentation: random 90-degree rotations and flips (a satellite tile has no "up").
 
@@ -221,7 +221,7 @@ Sends a real test image to every model that has weights and checks the three API
 
 **Training recipe (the same for everyone, so comparisons are fair).** Adam, cross-entropy loss, batch size 64, at most 20 epochs. Learning rate 0.001 for our CNN and the frozen models, 0.0001 for the fully fine-tuned ones. The epoch with the best **validation** accuracy is kept, and the **test** set is scored **once**, at the end. Every setting is run with seeds 0, 1 and 2 and reported as the mean and the sample standard deviation (`ddof=1`).
 
-**Why one `train()`.** It keeps all images in memory as small integers and does the augmentation on the GPU, so an epoch takes seconds, and every part of the project (B, C, D, E) is measured the same way.
+**Why one `train()`.** It keeps all images in memory as small integers and does the augmentation on the GPU, so an epoch takes seconds, and Parts C and D and the website's models are measured the same way. (Part B and the seed-4 runs of Part E use their own copies of the same recipe.)
 
 ## 5. Results
 
@@ -239,7 +239,7 @@ All numbers: test set (4,050 images), trained on all 18,900 training images, mea
 
 The frozen and fine-tuned runs also differ in learning rate (0.001 against 0.0001), so that comparison mixes two changes.
 
-**Data efficiency** (test accuracy when only part of the training images is used, 3 seeds):
+**Data efficiency** (test accuracy when only part of the training images is used, seeds 0 to 2; Rohan's extra seed-4 runs of our CNN at 5%, 10% and 25% are in `metrics.csv` but not averaged in here):
 
 | Training images | Scratch CNN | MobileNetV2 fine-tuned |
 |---:|---:|---:|
@@ -251,7 +251,7 @@ The frozen and fine-tuned runs also differ in learning rate (0.001 against 0.000
 
 ![Accuracy against the number of training images](Backend/results/figures/data_efficiency.png)
 
-**Where the best model goes wrong** (MobileNetV2, seed 0, 3,981 of 4,050 test images right, 69 mistakes):
+**Where the best model goes wrong** (MobileNetV2, seed 0: 3,981 of 4,050 test images right and 69 mistakes in Rohan's CPU evaluation, 98.30%; the same weights give 3,980 on a GPU, which is why `metrics.csv` and the 3-seed mean say 98.27%):
 
 ![Confusion matrix](Backend/results/figures/mobilenet_v2_full_frac1_seed0_confusion_matrix.png)
 
@@ -273,10 +273,11 @@ One command starts the pages and the model API together (inside `Backend/`, venv
 python -m app.server
 ```
 
-Open <http://127.0.0.1:8000/>. The page says **"Backend connected"**. Drop in a tile (or click a sample), pick a model and see the predicted class, the top 3 probabilities and a Grad-CAM overlay. The **Results** tab shows the real confusion matrix and the data-efficiency curves from `results/`. It needs no internet and listens on this computer only.
+Open <http://127.0.0.1:8000/>. The page says **"Backend connected"**. Drop in a tile (or click a sample), pick a model and see the predicted class, the top 3 probabilities and a Grad-CAM overlay. The **Results** tab shows the real confusion matrix and the data-efficiency curves from `results/`. Predictions and results need no internet (the pages ask Google Fonts for one font; without internet the browser uses a default font). It listens on this computer only.
 
 - **Models in the drop-down:** the ones whose weights are in `models/` with the name `<model>_frac1_seed0.pth`: `mobilenet_v2_full`, `resnet18_full`, `scratch_cnn`.
 - **API:** `GET /api/models`, `POST /api/predict`, `GET /api/metrics`, as described in [frontend/API.md](frontend/API.md) (written by Tejash, implemented in `Backend/app/server.py`).
+- **Known issue:** the charts in chapters 3 and 4 of the **Story** page (the landing page) still use sample numbers (the page says "Sample numbers until real results land"), not our measured results. The **Results** tab of the classifier page shows the real ones.
 - **Opening `frontend/app.html` directly** (double-click) runs the page in demo mode with simulated numbers. Use the server for real predictions.
 - **Best input:** a 64 x 64 EuroSAT tile (any size is resized to 64 x 64). On our 27,000 EuroSAT tiles the MobileNetV2 model is right 99.3% of the time (98.3% on the 4,050 never-seen test tiles). On anything else, see [Limitations](#9-limitations).
 
@@ -288,7 +289,7 @@ Five members, five parts. Each member has a log with line-by-line notes of their
 |---|---|---|---|---|
 | **Nitin** (team leader) | [Nitinshakthi7](https://github.com/Nitinshakthi7) | **D**: repository, shared training, data efficiency | Set up the repository, the laptop check `check_setup.py`, the team plan, logs and viva files. Wrote `utils.py` and the shared `train()` that every experiment uses. Ran the data-efficiency study (24 runs). Reviewed and merged the pull requests, checked teammates' checkpoints, added the Grad-CAM control and fixes to Part E, built the website server and its test (with Claude Code), split the repository into `Backend/` and `frontend/`, and wrote this README. | `src/utils.py`, `src/train.py`, `notebooks/05_data_efficiency.ipynb`, `check_setup.py`, `app/server.py`, `src/gradcam_sanity_check.py` |
 | **Srivalli** | [Srivalli-DT](https://github.com/Srivalli-DT) | **A**: data, EDA, fixed split | Wrote the data code: loading EuroSAT, the fixed stratified 70/15/15 split with leakage checks, the label-safe augmentation and the data loader. Made the EDA notebook (class counts, colour histograms, sample images) and the report draft on the dataset and its limitations. | `src/dataset.py`, `data/splits.csv`, `notebooks/01_eda.ipynb` |
-| **Tejash** | [TejashRajuKV](https://github.com/TejashRajuKV) | **B**: our own CNN and ablations, and the website pages | Designed the scratch CNN (3 blocks, 94,986 parameters). Notebook 02 trains it and two ablations (no BatchNorm, 2 blocks) with 3 seeds each and draws the learning curves and the ablation comparison. Wrote the Part B report draft. Built the website pages: the landing page, the classifier page and the API contract. | `src/models.py` (scratch CNN), `notebooks/02_baseline_cnn.ipynb`, `frontend/` |
+| **Tejash** | [TejashRajuKV](https://github.com/TejashRajuKV) | **B**: our own CNN and ablations, and the website pages | Built the scratch CNN (3 blocks, 94,986 parameters). Notebook 02 trains it and two ablations (no BatchNorm, 2 blocks) with 3 seeds each and draws the learning curves and the ablation comparison. Wrote the Part B report draft. Built the website pages: the landing page, the classifier page and the API contract. | `src/models.py` (scratch CNN), `notebooks/02_baseline_cnn.ipynb`, `frontend/` |
 | **Rachana** | [rachana26paw](https://github.com/rachana26paw) | **C**: transfer learning | Added the transfer models (ResNet-18 and MobileNetV2, frozen and fully fine-tuned). Notebook 03 runs 12 trainings (4 setups x 3 seeds) and draws the learning curves and the transfer-against-scratch comparison. Wrote the report draft: introduction, related work and transfer results. | `src/models.py` (transfer models), `notebooks/03_transfer_learning.ipynb` |
 | **Rohan** | [rohans-oss](https://github.com/rohans-oss) | **E**: evaluation and explainability | Wrote the evaluation (confusion matrix, per-class report, list of mistakes), Grad-CAM written by hand, the t-SNE plot, Grad-CAM pictures for all classes, a confidence-drop experiment and the seed-4 runs of our CNN on 5%, 10% and 25% of the data. Notebook 04 and the Part E analysis. | `src/evaluate.py`, `src/gradcam.py`, `src/visualize_*.py`, `notebooks/04_evaluation_and_explainability.ipynb` |
 
@@ -296,7 +297,7 @@ Five members, five parts. Each member has a log with line-by-line notes of their
 
 | Pull requests | Who |
 |---|---|
-| #1, #2, #3, #7, #9, #13, #14 | Nitin |
+| #1, #2, #3, #7, #9, #13, #14, #15 | Nitin |
 | #5 | Srivalli |
 | #6 | Tejash (his website pages came in from his `frontend` branch, in #14) |
 | #4, #8 | Rachana |

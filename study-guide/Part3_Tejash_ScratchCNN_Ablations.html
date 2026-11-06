@@ -1,0 +1,1196 @@
+<!doctype html><html><head><meta charset='utf-8'><title>Part3_Tejash_ScratchCNN_Ablations</title><style>
+@page { size: A4; margin: 16mm 14mm; }
+body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10pt; line-height: 1.4; color:#111; }
+h1 { font-size: 20pt; color:#1f3a5f; border-bottom: 3px solid #1f3a5f; padding-bottom:4px; }
+h2 { font-size: 14pt; color:#1f3a5f; margin-top:18px; border-bottom:1px solid #ccc; }
+h3 { font-size: 11.5pt; color:#2b5d8a; margin-top:14px; }
+table { border-collapse: collapse; width:100%; margin:6px 0 10px; font-size:9pt; page-break-inside:auto; }
+th, td { border:1px solid #bbb; padding:3px 5px; vertical-align:top; text-align:left; }
+th { background:#e8eef5; }
+tr { page-break-inside: avoid; }
+pre { background:#f4f5f7; border:1px solid #ddd; padding:6px; font-family: Consolas, 'Courier New', monospace; font-size:7.6pt; line-height:1.25; white-space:pre-wrap; word-wrap:break-word; page-break-inside:auto; }
+code { font-family: Consolas, 'Courier New', monospace; font-size:8.8pt; background:#f1f1f1; padding:0 2px; }
+pre code { background:none; padding:0; font-size:7.6pt; }
+blockquote { border-left:3px solid #8aa; margin:6px 0; padding:2px 10px; color:#333; background:#f7fbfb; }
+</style></head><body><h1>Part 3 – Tejash: Our own CNN and ablations (Part B), and the website pages</h1>
+<h2>What my part is</h2>
+<p>My part is Part B of the project: we built our own convolutional neural network (CNN) from scratch, trained it on the EuroSAT satellite tiles, and tested two changes to it. The baseline has three blocks of convolution, batch normalisation, ReLU and max pooling, with 32, 64 and 128 filters, followed by global average pooling and one linear layer that gives 10 class scores. We trained it with Adam (learning rate 0.001), cross-entropy loss, batches of 64 and at most 20 epochs, and we kept the epoch with the best validation accuracy. The two ablations were "BatchNorm off" and "two blocks instead of three", and each one was run with seeds 0, 1 and 2. The files I own are <code>src/models.py</code> (the function <code>build_scratch_cnn</code>), <code>notebooks/02_baseline_cnn.ipynb</code>, the figures and seed-0 history in <code>results/figures/</code>, and the Part B draft in <code>report/part_b_scratch_cnn_draft.md</code>. I also built the website pages: the landing page <code>frontend/Eyes_in_the_Sky_landing.html</code>, the classifier page <code>frontend/app.html</code>, and the API contract <code>frontend/API.md</code>. The main number to remember is that our scratch CNN reached a mean test accuracy of 92.7% over three seeds.</p>
+<h2>Definitions</h2>
+<p><strong>Image tile (patch).</strong> A small square piece of a satellite image. Our tiles are 64 x 64 pixels with 3 colour channels (red, green, blue).</p>
+<p><strong>Channel.</strong> One layer of values in a stack of numbers. An RGB image has 3 channels. A feature map in a CNN also has channels, one per filter.</p>
+<p><strong>Convolution.</strong> A small grid of learned numbers slides over the image. At each position we multiply the grid with the pixels under it and add the results into one output number. This finds local patterns such as edges and textures.</p>
+<p><strong>Kernel and filter.</strong> The small learned grid is the kernel. Here every kernel is 3 x 3. People also say "filter" for one output channel of a convolution, so "32 filters" means 32 kernels that each make one feature map.</p>
+<p><strong>Stride.</strong> The number of pixels the kernel moves between positions. Our convolutions use the default stride of 1, so they look at every position.</p>
+<p><strong>Padding.</strong> Extra border pixels (zeros) added around the image before the convolution. With a 3 x 3 kernel, padding of 1 keeps the width and height the same.</p>
+<p><strong>Feature map.</strong> The grid of numbers produced by one filter. Each value says how strongly that filter's pattern appears at that spot.</p>
+<p><strong>ReLU.</strong> An activation function: it keeps positive numbers and turns negative numbers into 0. Without a non-linear step like this, stacked convolutions would act like one big linear operation.</p>
+<p><strong>Max pooling.</strong> For each 2 x 2 block of values, keep only the largest one. This halves the width and height and has no learned numbers.</p>
+<p><strong>Batch normalisation (BatchNorm).</strong> For each channel, it shifts and scales the values in a batch so their average is about 0 and their spread is about 1, then applies two learned numbers per channel (gamma and beta). It makes training steadier. In evaluation mode it uses running averages collected during training.</p>
+<p><strong>Global average pooling.</strong> Replace each whole feature map by the average of its values, so each map gives one number. Here it is written as <code>AdaptiveAvgPool2d(1)</code>, which also works if the input size changes.</p>
+<p><strong>Fully connected (linear) layer.</strong> Every input number is multiplied by its own learned weight, the results are added, and a bias is added. Our final layer maps 128 inputs to 10 outputs.</p>
+<p><strong>Logits.</strong> The raw output scores of the last layer, before they are turned into probabilities.</p>
+<p><strong>Softmax.</strong> A function that turns the 10 logits into 10 probabilities that add up to 1.</p>
+<p><strong>Cross-entropy loss.</strong> A loss that is small when the model gives the correct class a high probability and large when it gives it a low one. In PyTorch, <code>CrossEntropyLoss</code> takes the raw logits and applies softmax itself.</p>
+<p><strong>Backpropagation and gradients.</strong> After each batch, the loss is traced back through the network to work out how each weight should change to lower the loss. Those change directions are the gradients.</p>
+<p><strong>Optimiser, Adam.</strong> The rule that uses the gradients to change the weights. Adam keeps a running average of the gradients and of their squares, so each weight gets its own step size.</p>
+<p><strong>Learning rate.</strong> How big each weight change is. Ours is 0.001 for Adam.</p>
+<p><strong>Batch.</strong> A group of images processed together before one weight update. Our batch size is 64.</p>
+<p><strong>Epoch.</strong> One full pass through the training set. With 18,900 training images and batches of 64, one epoch has 296 updates (295 full batches and one batch of 20).</p>
+<p><strong>Train, validation and test sets.</strong> The training set (18,900 tiles) changes the weights. The validation set (4,050 tiles) is used to pick the epoch and to compare settings. The test set (4,050 tiles) gives the final score, and we scored it once per finished run. The split is 70/15/15 of 27,000 tiles.</p>
+<p><strong>Overfitting.</strong> The model learns the training images too closely. Training scores keep improving while validation scores stop improving or get worse.</p>
+<p><strong>Underfitting.</strong> The model is too simple or was not trained long enough, so both training and validation scores stay low.</p>
+<p><strong>Ablation.</strong> An experiment where you change one part of a model, keep everything else the same, and see how the result changes. It shows how much that part contributes.</p>
+<p><strong>Seed.</strong> A number that fixes the random choices in a run: initial weights, the order of the training images, and the augmentation choices. The same seed on the same machine gives the same run. Different seeds show how much results vary from run to run.</p>
+<p><strong>Mean and standard deviation.</strong> The mean is the average over seeds. We report the sample standard deviation (the spread across the three seeds, divided by n - 1). A small standard deviation means the seeds agreed.</p>
+<p><strong>Learning curve.</strong> A graph of loss or accuracy after each epoch, for both the training and the validation set. It shows whether the model is learning and whether it starts to overfit.</p>
+<p><strong>Parameters.</strong> The learned numbers in the model: convolution weights and biases, BatchNorm gamma and beta, and the final linear weights and biases.</p>
+<p><strong>Buffers.</strong> Numbers stored in the model that are not learned by gradients. BatchNorm keeps its running mean and running variance as buffers.</p>
+<p><strong>Accuracy.</strong> The fraction of images whose top predicted class is correct.</p>
+<p><strong>Macro-F1.</strong> The F1 score for each class, averaged with equal weight. F1 combines precision (how many predicted positives are right) and recall (how many true positives were found). Macro averaging stops big classes from hiding weak small ones.</p>
+<p><strong>Chance level.</strong> The accuracy a random guess would get. With 10 equally sized classes it is 10%.</p>
+<p><strong>Data augmentation.</strong> Making extra training images by changing existing ones in ways that keep the label. Our changes are 90-degree rotations and horizontal or vertical flips, which are safe for satellite tiles.</p>
+<p><strong>Normalisation (ImageNet mean and std).</strong> Subtracting a mean and dividing by a standard deviation for each colour channel, so the input numbers are in a standard range. We use the ImageNet numbers for all models so the comparison is fair.</p>
+<p><strong>Checkpoint and best-epoch selection.</strong> A checkpoint is a saved copy of the weights. We keep the weights from the epoch with the highest validation accuracy, not the last epoch.</p>
+<p><strong>model.train() and model.eval().</strong> <code>train()</code> turns on training behaviour (BatchNorm uses batch statistics). <code>eval()</code> turns it off (BatchNorm uses running statistics). We call <code>eval()</code> before any validation or test scoring.</p>
+<p><strong>torch.no_grad().</strong> A context that stops PyTorch from tracking gradients. Scoring does not need gradients, so it is faster and uses less memory.</p>
+<p><strong>DataLoader and num_workers.</strong> The DataLoader gives the model batches of images. <code>num_workers</code> is the number of extra worker processes that load images in parallel. We use 0, which means the main process loads them, because the one-worker setting gave a shared-memory error on this Windows laptop.</p>
+<p><strong>GPU and CUDA.</strong> A graphics card can run the matrix maths much faster than a CPU. CUDA is the NVIDIA system that lets PyTorch use it. Our laptop has an RTX 3050 with 6 GB.</p>
+<p><strong>Tensor.</strong> PyTorch's name for a multi-dimensional array of numbers. Image batches have the shape (N, C, H, W): number of images, channels, height, width.</p>
+<p><strong>Dropout.</strong> During training it sets a random share of values to 0 to reduce overfitting. We have a switch for it, but all our runs use 0.0, so it is off.</p>
+<p><strong>Grad-CAM.</strong> A heat map that shows which pixels pushed the model towards its chosen class. The website server makes it for the classifier page.</p>
+<p><strong>Confusion matrix.</strong> A 10 x 10 table. Rows are the true classes and columns are the predicted classes, so the diagonal is correct answers.</p>
+<p><strong>REST API, JSON, multipart form.</strong> A REST API is a set of web addresses (routes) that return data. JSON is the text format for that data. A multipart form sends a file and extra fields in one request, which is how the page uploads an image and the model name.</p>
+<p><strong>CORS.</strong> A browser rule that blocks a page on one address from calling a server on another address unless the server says it is allowed. Our server allows all origins, so the page works when opened from another address.</p>
+<h2>Code, line by line</h2>
+<p>Line numbers in the tables are counted inside each block. For <code>src/models.py</code> they are the real file line numbers. For the notebook, line 1 is the first line of the pasted cell.</p>
+<h3>1. <code>src/models.py</code>: <code>build_scratch_cnn</code> (lines 11 to 49)</h3>
+<p>The file also imports <code>torch.nn as nn</code> and <code>torchvision.models</code> at lines 7 and 8. The function is:</p>
+<pre><code class="language-python">def build_scratch_cnn(
+    num_classes=10,
+    use_batchnorm=True,
+    depth=3,
+    dropout=0.0,
+):
+    &quot;&quot;&quot;Build our CNN for 64x64 RGB images.
+
+    The default settings are the baseline: 3 blocks with 32, 64 and 128 filters.
+    Change one option at a time to make an ablation.
+    &quot;&quot;&quot;
+    if depth not in (2, 3):
+        raise ValueError(&quot;depth must be 2 or 3&quot;)
+    if not 0 &lt;= dropout &lt; 1:
+        raise ValueError(&quot;dropout must be between 0 and 1&quot;)
+    if num_classes &lt; 1:
+        raise ValueError(&quot;num_classes must be positive&quot;)
+
+    filter_counts = [32, 64, 128][:depth]
+    layers = []
+    input_channels = 3
+
+    for output_channels in filter_counts:
+        # Each block finds image features, then halves the image width and height.
+        layers.append(nn.Conv2d(input_channels, output_channels, kernel_size=3, padding=1))
+        if use_batchnorm:
+            layers.append(nn.BatchNorm2d(output_channels))
+        layers.append(nn.ReLU())
+        layers.append(nn.MaxPool2d(kernel_size=2))
+        input_channels = output_channels
+
+    # Keep one value per feature map, whatever the final image size is.
+    layers.append(nn.AdaptiveAvgPool2d(1))
+    layers.append(nn.Flatten())
+    if dropout &gt; 0:
+        layers.append(nn.Dropout(p=dropout))
+    layers.append(nn.Linear(input_channels, num_classes))
+
+    return nn.Sequential(*layers)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>11-16</td>
+<td>Defines the function with four switches. The defaults are the baseline: 10 classes, BatchNorm on, depth 3, no dropout.</td>
+<td>Default arguments, ablation switches</td>
+<td>One function builds the baseline and every ablation, so the only difference between runs is the switch we change. Other options: a separate class per model (more code, more copies to keep in step) or a config file (too much for two switches).</td>
+</tr>
+<tr>
+<td>22-23</td>
+<td>Stops with an error unless depth is 2 or 3.</td>
+<td>Input validation</td>
+<td>A typo such as <code>depth=4</code> would otherwise build a model that is not in the plan. We check the value instead of letting it fail later. An <code>assert</code> would also work, but it can be switched off.</td>
+</tr>
+<tr>
+<td>24-25</td>
+<td>Dropout must be from 0 up to but not including 1.</td>
+<td>Input validation</td>
+<td>Dropout of 1 would switch off every value, so the model could not learn.</td>
+</tr>
+<tr>
+<td>26-27</td>
+<td>Class count must be at least 1.</td>
+<td>Input validation</td>
+<td>Stops a meaningless model.</td>
+</tr>
+<tr>
+<td>29</td>
+<td>Takes the first <code>depth</code> items of [32, 64, 128]. Depth 3 gives all three blocks; depth 2 gives 32 and 64.</td>
+<td>Feature maps, slicing</td>
+<td>Filters double as the network gets deeper, a common pattern. The depth-2 ablation just removes the last block. Alternative: list each block by hand, which is clearer but longer.</td>
+</tr>
+<tr>
+<td>30-31</td>
+<td>Creates an empty list for the layers and sets the input to 3 channels (red, green, blue).</td>
+<td>Channels</td>
+<td><code>nn.Sequential</code> needs the layers in order, so we collect them in a list first.</td>
+</tr>
+<tr>
+<td>33</td>
+<td>Loops once per block (3 times for the baseline, 2 for depth 2).</td>
+<td>Blocks</td>
+<td>Each block has the same pattern, so one loop avoids writing it three times.</td>
+</tr>
+<tr>
+<td>35</td>
+<td>Adds a 3 x 3 convolution. <code>padding=1</code> keeps the width and height.</td>
+<td>Convolution, kernel, padding</td>
+<td>3 x 3 is the common small choice. A 5 x 5 kernel would have more weights for a similar result. A stride-2 convolution could replace max pooling, but we follow the plan.</td>
+</tr>
+<tr>
+<td>36-37</td>
+<td>Adds BatchNorm for that block, only if <code>use_batchnorm</code> is True.</td>
+<td>Batch normalisation</td>
+<td>This is the switch for the BatchNorm ablation. Other normalisations (GroupNorm, LayerNorm) exist, but the plan asked for BatchNorm.</td>
+</tr>
+<tr>
+<td>38</td>
+<td>Adds ReLU.</td>
+<td>Activation</td>
+<td>Lets the network learn non-linear patterns. Alternatives: LeakyReLU, GELU. ReLU is cheap and standard.</td>
+</tr>
+<tr>
+<td>39</td>
+<td>Adds 2 x 2 max pooling.</td>
+<td>Max pooling</td>
+<td>Halves the width and height (64 to 32 to 16 to 8), so later layers see a wider area. It has no weights. Average pooling is another option.</td>
+</tr>
+<tr>
+<td>40</td>
+<td>Sets the next block's input channels to this block's output channels.</td>
+<td>Channels</td>
+<td>Keeps the channel counts matching from one layer to the next.</td>
+</tr>
+<tr>
+<td>42-43</td>
+<td>Adds global average pooling. It turns each 8 x 8 feature map into one number.</td>
+<td>Global average pooling</td>
+<td>This gives 128 numbers and no weights. If we had flattened the 128 x 8 x 8 map instead, the linear layer would need 8,192 x 10 weights, many more than 1,280. The average also works for any input size.</td>
+</tr>
+<tr>
+<td>44</td>
+<td>Flattens (128, 1, 1) into a vector of 128 numbers.</td>
+<td>Flatten</td>
+<td>The linear layer needs a flat vector.</td>
+</tr>
+<tr>
+<td>45-46</td>
+<td>Adds dropout only when dropout is above 0.</td>
+<td>Dropout</td>
+<td>In our runs dropout is 0, so this layer is not added at all. It is kept as a switch for future tests.</td>
+</tr>
+<tr>
+<td>47</td>
+<td>Adds the final linear layer from 128 inputs to 10 outputs (the logits).</td>
+<td>Fully connected layer, logits</td>
+<td>One score per EuroSAT class. The softmax is not in the model; the loss function applies it.</td>
+</tr>
+<tr>
+<td>49</td>
+<td>Packs the layers into one <code>nn.Sequential</code> and returns it.</td>
+<td>Sequential model</td>
+<td>The model can be called like one function, and <code>.parameters()</code> finds all its weights.</td>
+</tr>
+</tbody>
+</table>
+<h3>2. Notebook <code>02_baseline_cnn.ipynb</code>, setup cell</h3>
+<pre><code class="language-python">from pathlib import Path
+import json
+import os
+import sys
+
+# Help CUDA reuse memory blocks on Windows. This does not change the model.
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+
+# Make imports work whether Jupyter starts here or in the notebooks folder.
+project_root = Path.cwd()
+if not (project_root / 'src').is_dir():
+    project_root = project_root.parent
+os.chdir(project_root)
+sys.path.insert(0, str(project_root))
+import time
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import torch
+from sklearn.metrics import accuracy_score, f1_score
+
+from src.dataset import get_loader
+from src.models import build_scratch_cnn
+from src.utils import FIGURES_DIR, METRICS_CSV, MODELS_DIR, get_device, set_seed
+
+device = get_device()
+print('Device:', device)
+print('GPU:', torch.cuda.get_device_name(0) if device.type == 'cuda' else 'not available')
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-4</td>
+<td>Imports standard Python modules for paths, JSON, environment variables and the system path.</td>
+<td>Python modules</td>
+<td>Needed for file paths and for finding our <code>src</code> package.</td>
+</tr>
+<tr>
+<td>6-7</td>
+<td>Sets a CUDA memory setting if it is not already set.</td>
+<td>GPU memory allocator</td>
+<td>On a 6 GB laptop GPU, <code>expandable_segments</code> reduces memory fragmentation. It does not change the maths.</td>
+</tr>
+<tr>
+<td>9-14</td>
+<td>Finds the project root (the folder that contains <code>src</code>) and changes into it, then adds it to the import path.</td>
+<td>Relative paths</td>
+<td>The notebook works whether Jupyter starts in the root or in <code>notebooks/</code>. The data paths like <code>data/splits.csv</code> depend on this.</td>
+</tr>
+<tr>
+<td>15-24</td>
+<td>Imports time, plotting, pandas, torch, sklearn metrics and our own helpers (<code>get_loader</code>, <code>build_scratch_cnn</code>, paths, device, seed).</td>
+<td>Shared code</td>
+<td>We reuse the team's data loader and paths so every part uses the same split and folders.</td>
+</tr>
+<tr>
+<td>26-28</td>
+<td>Picks the GPU if one is available and prints its name.</td>
+<td>Device, GPU</td>
+<td>Training a CNN is much faster on the GPU. The printed output confirms it is the RTX 3050.</td>
+</tr>
+</tbody>
+</table>
+<h3>3. Notebook, settings cell</h3>
+<pre><code class="language-python"># These settings match the team plan.
+BATCH_SIZE = 64
+LEARNING_RATE = 0.001
+MAX_EPOCHS = 20
+SEEDS = [0, 1, 2]
+
+# Change one setting for each ablation. Keep all other settings the same.
+EXPERIMENTS = {
+    'scratch_cnn': {'use_batchnorm': True, 'depth': 3, 'dropout': 0.0},
+    'scratch_cnn_no_batchnorm': {'use_batchnorm': False, 'depth': 3, 'dropout': 0.0},
+    'scratch_cnn_depth2': {'use_batchnorm': True, 'depth': 2, 'dropout': 0.0},
+}
+
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+assert Path('data/splits.csv').is_file(), 'Missing fixed split: data/splits.csv'
+assert (Path('data/eurosat/2750')).is_dir(), 'Download EuroSAT using the README setup steps.'
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-5</td>
+<td>Writes the team's fixed settings: batch 64, learning rate 0.001, at most 20 epochs, seeds 0, 1, 2.</td>
+<td>Hyper-parameters</td>
+<td>Putting them at the top means one place to change them. These values come from the team plan so every model is compared on the same terms.</td>
+</tr>
+<tr>
+<td>7-12</td>
+<td>A dictionary of the three settings. Each entry is a set of arguments for <code>build_scratch_cnn</code>.</td>
+<td>Ablation design</td>
+<td>Each ablation differs from the baseline in exactly one switch. The dictionary keys become the model names in the results.</td>
+</tr>
+<tr>
+<td>14-15</td>
+<td>Creates the <code>results/figures</code> and <code>models</code> folders if they are missing.</td>
+<td>Folders</td>
+<td>The notebook saves files there, so the folders must exist.</td>
+</tr>
+<tr>
+<td>16-17</td>
+<td>Stops with a clear message if the split file or the EuroSAT images are missing.</td>
+<td>Assertions</td>
+<td>Fails early with a helpful message, instead of crashing later in the training loop.</td>
+</tr>
+</tbody>
+</table>
+<h3>4. Notebook, helper functions <code>score_model</code> and <code>train_one_model</code></h3>
+<pre><code class="language-python">def score_model(model, loader, loss_function):
+    &quot;&quot;&quot;Return average loss and accuracy for one pass through a data loader.&quot;&quot;&quot;
+    model.eval()
+    total_loss = 0.0
+    all_labels = []
+    all_predictions = []
+
+    with torch.no_grad():
+        for images, labels in loader:
+            images = images.to(device)
+            labels = labels.to(device)
+            scores = model(images)
+            total_loss += loss_function(scores, labels).item() * len(labels)
+            all_labels.extend(labels.cpu().tolist())
+            all_predictions.extend(scores.argmax(dim=1).cpu().tolist())
+
+    average_loss = total_loss / len(loader.dataset)
+    accuracy = accuracy_score(all_labels, all_predictions)
+    return average_loss, accuracy
+
+
+def train_one_model(model_name, options, seed, epochs=MAX_EPOCHS):
+    &quot;&quot;&quot;Train one setting and return the weights from its best validation epoch.&quot;&quot;&quot;
+    set_seed(seed)
+    train_loader = get_loader(
+        'train', seed=seed, augment=True, batch_size=BATCH_SIZE, num_workers=0
+    )
+    val_loader = get_loader('val', seed=seed, batch_size=BATCH_SIZE)
+
+    model = build_scratch_cnn(**options).to(device)
+    loss_function = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE, foreach=False)
+    history = {'train_loss': [], 'train_accuracy': [], 'val_loss': [], 'val_accuracy': []}
+    best_accuracy = -1.0
+    best_epoch = 0
+    best_weights = None
+
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0.0
+        correct = 0
+        seen = 0
+
+        for images, labels in train_loader:
+            images = images.to(device)
+            labels = labels.to(device)
+            optimizer.zero_grad()
+            scores = model(images)
+            loss = loss_function(scores, labels)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(labels)
+            correct += (scores.argmax(dim=1) == labels).sum().item()
+            seen += len(labels)
+
+        train_loss = total_loss / seen
+        train_accuracy = correct / seen
+        val_loss, val_accuracy = score_model(model, val_loader, loss_function)
+        history['train_loss'].append(train_loss)
+        history['train_accuracy'].append(train_accuracy)
+        history['val_loss'].append(val_loss)
+        history['val_accuracy'].append(val_accuracy)
+
+        print(
+            f'{model_name} | seed {seed} | epoch {epoch + 1:02d}/{epochs} | '
+            f'train loss {train_loss:.4f}, train accuracy {train_accuracy:.3f} | '
+            f'val loss {val_loss:.4f}, val accuracy {val_accuracy:.3f}'
+        )
+
+        if val_accuracy &gt; best_accuracy:
+            best_accuracy = val_accuracy
+            best_epoch = epoch + 1
+            best_weights = {
+                name: value.detach().cpu().clone()
+                for name, value in model.state_dict().items()
+            }
+
+    model.load_state_dict(best_weights)
+    print(f'Best validation accuracy: {best_accuracy:.3f} at epoch {best_epoch}')
+    return model, history, best_epoch
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>score_model</code> 1-2</td>
+<td>Defines a function that scores a whole loader and returns average loss and accuracy.</td>
+<td>Evaluation function</td>
+<td>Used for validation after each epoch, so the scoring code is written once.</td>
+</tr>
+<tr>
+<td><code>score_model</code> 3</td>
+<td><code>model.eval()</code> switches BatchNorm to its running averages.</td>
+<td>Train vs eval mode</td>
+<td>Scoring must not depend on the batch in front of it, so eval mode is required here.</td>
+</tr>
+<tr>
+<td><code>score_model</code> 8-15</td>
+<td>Inside <code>no_grad()</code>, runs the model on each batch and collects the labels and predictions.</td>
+<td><code>torch.no_grad()</code>, argmax</td>
+<td>No gradients are needed for scoring, which saves time and memory. <code>argmax</code> picks the highest score as the predicted class.</td>
+</tr>
+<tr>
+<td><code>score_model</code> 13</td>
+<td>Adds loss times batch size to a running total.</td>
+<td>Weighted average</td>
+<td>The last batch can be smaller than 64, so multiplying by its size keeps the average correct.</td>
+</tr>
+<tr>
+<td><code>score_model</code> 17-19</td>
+<td>Divides the total loss by the dataset size, computes accuracy with sklearn, and returns both.</td>
+<td>Average loss, accuracy</td>
+<td>Gives the same kind of numbers used in the learning curves.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 24</td>
+<td>Sets the seed.</td>
+<td>Reproducibility</td>
+<td>Makes the initial weights and the shuffle order repeatable for each seed.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 25-28</td>
+<td>Builds the training loader (with augmentation) and the validation loader (without).</td>
+<td>Data loaders, augmentation</td>
+<td>Augmentation is only for training, as the plan asks. Validation uses the fixed split with no changes.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 30</td>
+<td>Builds the model from the options and moves it to the GPU.</td>
+<td>Model construction</td>
+<td>The same function builds the baseline and each ablation.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 31</td>
+<td>Creates the cross-entropy loss.</td>
+<td>Loss function</td>
+<td>It works directly on the 10 logits and the true labels.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 32</td>
+<td>Creates Adam with learning rate 0.001.</td>
+<td>Optimiser</td>
+<td>The plan's settings. <code>foreach=False</code> picks a simpler per-weight loop of Adam. The notebook gives no reason; it changes speed and memory use, not the maths as far as I know. Check this before the viva.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 33-36</td>
+<td>Creates empty lists for the four curves and sets the best-epoch trackers.</td>
+<td>Learning curves, checkpoint selection</td>
+<td>The history is saved to JSON and plotted later.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 38-39</td>
+<td>Loops over the epochs and sets training mode.</td>
+<td>Epoch, <code>model.train()</code></td>
+<td>Training mode lets BatchNorm use batch statistics.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 44-51</td>
+<td>For each training batch: clear old gradients, run the model, compute the loss, backpropagate, and take one Adam step.</td>
+<td>Forward pass, backpropagation, optimiser step</td>
+<td>This is the heart of learning. One epoch is 296 of these steps.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 53-55</td>
+<td>Adds the batch loss and the number of correct predictions to running totals.</td>
+<td>Running training metrics</td>
+<td>These are the training-set numbers for the curves. Note that they are measured during the epoch, while the weights are still changing and on augmented images.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 57-63</td>
+<td>Turns the totals into training loss and accuracy, scores the validation set, and stores all four numbers.</td>
+<td>Learning curves</td>
+<td>The validation pass uses the same epoch's weights, so the two curves line up.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 65-69</td>
+<td>Prints one line per epoch.</td>
+<td>Logging</td>
+<td>Lets us watch the run and copy the numbers.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 71-77</td>
+<td>If this epoch has the best validation accuracy so far, saves a copy of all weights.</td>
+<td>Checkpoint selection</td>
+<td>We use a strict <code>&gt;</code>, so a tie keeps the earlier epoch. The test set is never used here. Alternative: save to disk each time.</td>
+</tr>
+<tr>
+<td><code>train_one_model</code> 79-81</td>
+<td>Loads the best weights back into the model, prints the best epoch, and returns the model, history and epoch.</td>
+<td>Model selection</td>
+<td>The returned model is the best-validation model, not the last one.</td>
+</tr>
+</tbody>
+</table>
+<h3>5. Notebook, baseline run and learning curves (Lap 1)</h3>
+<pre><code class="language-python">checkpoint_path = MODELS_DIR / 'scratch_cnn_baseline_seed0.pth'
+history_path = FIGURES_DIR / 'scratch_cnn_seed0_history.json'
+
+# Reuse a finished local run if its checkpoint and history are both present.
+if checkpoint_path.is_file() and history_path.is_file():
+    with open(history_path, encoding='utf-8') as file:
+        baseline_history = json.load(file)
+    baseline_model = build_scratch_cnn(**EXPERIMENTS['scratch_cnn']).to(device)
+    baseline_model.load_state_dict(
+        torch.load(checkpoint_path, map_location=device, weights_only=True)
+    )
+    baseline_best_epoch = max(
+        range(len(baseline_history['val_accuracy'])),
+        key=baseline_history['val_accuracy'].__getitem__,
+    ) + 1
+    print('Loaded the completed local seed 0 baseline from its checkpoint and history.')
+else:
+    start_time = time.perf_counter()
+    baseline_model, baseline_history, baseline_best_epoch = train_one_model(
+        'scratch_cnn', EXPERIMENTS['scratch_cnn'], seed=0
+    )
+    elapsed_minutes = (time.perf_counter() - start_time) / 60
+    print(f'Baseline run took {elapsed_minutes:.1f} minutes')
+    torch.save(baseline_model.state_dict(), checkpoint_path)
+    with open(history_path, 'w', encoding='utf-8') as file:
+        json.dump(baseline_history, file, indent=2)
+
+epochs = range(1, len(baseline_history['train_loss']) + 1)
+fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+axes[0].plot(epochs, baseline_history['train_loss'], label='Train')
+axes[0].plot(epochs, baseline_history['val_loss'], label='Validation')
+axes[0].set(title='Loss', xlabel='Epoch', ylabel='Cross-entropy')
+axes[0].legend()
+axes[1].plot(epochs, baseline_history['train_accuracy'], label='Train')
+axes[1].plot(epochs, baseline_history['val_accuracy'], label='Validation')
+axes[1].axhline(0.10, color='gray', linestyle=':', label='10% chance level')
+axes[1].set(title='Accuracy', xlabel='Epoch', ylabel='Accuracy', ylim=(0, 1))
+axes[1].legend()
+fig.tight_layout()
+fig.savefig(FIGURES_DIR / 'scratch_cnn_learning_curves.png', dpi=160)
+plt.show()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-2</td>
+<td>Sets the paths for the baseline weights and its history file.</td>
+<td>Checkpoint files</td>
+<td>Saving to known names lets later cells reuse the run.</td>
+</tr>
+<tr>
+<td>4-15</td>
+<td>If both files already exist, loads the history and the weights and finds the best epoch from the saved validation accuracies.</td>
+<td>Reuse of finished runs</td>
+<td>Saves about 20 epochs of training on reruns. <code>weights_only=True</code> loads only tensors, which is safer. <code>max</code> with <code>range</code> returns the first index with the highest value, so it matches the <code>&gt;</code> rule in <code>train_one_model</code>.</td>
+</tr>
+<tr>
+<td>16</td>
+<td>Prints that the run was reused.</td>
+<td>Logging</td>
+<td>Makes it clear the output is from the saved run, not a new one.</td>
+</tr>
+<tr>
+<td>17-26</td>
+<td>Otherwise trains seed 0 from scratch, times it, saves the weights and the history.</td>
+<td>Training and saving</td>
+<td>Saves a checkpoint and JSON so the figures can be remade without retraining.</td>
+</tr>
+<tr>
+<td>28-38</td>
+<td>Draws two panels: loss (train and validation) and accuracy (train and validation), with a dotted 10% line for chance.</td>
+<td>Learning curves</td>
+<td>Two panels make it easy to see both loss and accuracy. The chance line shows the model is far above guessing.</td>
+</tr>
+<tr>
+<td>39-41</td>
+<td>Saves the figure at 160 dpi and displays it.</td>
+<td>Figure export</td>
+<td>The figure goes into <code>results/figures/</code> for the report and the website.</td>
+</tr>
+</tbody>
+</table>
+<p>The notebook output for this cell says the run was loaded from the saved files, not retrained. So the printed numbers you see come from the earlier training run, and the curve figure was redrawn from the same history.</p>
+<h3>6. Notebook, ablation sweep (Lap 2)</h3>
+<pre><code class="language-python"># Run the full Part B comparison. Completed runs are read from metrics.csv on reruns.
+RUN_ABLATION_SWEEP = True
+
+if RUN_ABLATION_SWEEP:
+    all_results = (
+        pd.read_csv(METRICS_CSV)
+        if METRICS_CSV.exists()
+        else pd.DataFrame(columns=['model', 'fraction', 'seed', 'accuracy', 'macro_f1'])
+    )
+    rows = []
+    for model_name, options in EXPERIMENTS.items():
+        for seed in SEEDS:
+            already_done = (
+                (all_results['model'] == model_name)
+                &amp; (all_results['fraction'] == 1.0)
+                &amp; (all_results['seed'] == seed)
+            ).any()
+            if already_done:
+                print(f'Skip {model_name}, seed {seed}: test result is already saved.')
+                continue
+
+            if model_name == 'scratch_cnn' and seed == 0:
+                # Seed 0 was trained above; reuse it and score its test split once.
+                model = baseline_model
+                best_epoch = baseline_best_epoch
+            else:
+                model, history, best_epoch = train_one_model(model_name, options, seed)
+            test_loader = get_loader('test', seed=seed, batch_size=BATCH_SIZE)
+            test_labels = []
+            test_predictions = []
+            model.eval()
+            with torch.no_grad():
+                for batch_number, (images, labels) in enumerate(test_loader, start=1):
+                    scores = model(images.to(device))
+                    test_labels.extend(labels.tolist())
+                    test_predictions.extend(scores.argmax(dim=1).cpu().tolist())
+                    if batch_number % 10 == 0:
+                        print(f'test batches scored: {batch_number}')
+
+            row = {
+                'model': model_name,
+                'fraction': 1.0,
+                'seed': seed,
+                'accuracy': accuracy_score(test_labels, test_predictions),
+                'macro_f1': f1_score(test_labels, test_predictions, average='macro'),
+            }
+            rows.append(row)
+            torch.save(
+                model.state_dict(),
+                MODELS_DIR / f'{model_name}_seed{seed}.pth',
+            )
+            same_run = (
+                (all_results['model'] == model_name)
+                &amp; (all_results['fraction'] == 1.0)
+                &amp; (all_results['seed'] == seed)
+            )
+            all_results = all_results.loc[~same_run]
+            all_results = pd.concat([all_results, pd.DataFrame([row])], ignore_index=True)
+            all_results.to_csv(METRICS_CSV, index=False)
+            print(f&quot;Test result (best epoch {best_epoch}): {row}&quot;)
+
+    comparison = all_results[
+        all_results['model'].isin(EXPERIMENTS)
+        &amp; (all_results['fraction'] == 1.0)
+        &amp; all_results['seed'].isin(SEEDS)
+    ]
+    summary = comparison.groupby('model')[['accuracy', 'macro_f1']].agg(['mean', 'std'])
+    display(summary)
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    for axis, metric, title in zip(
+        axes, ['accuracy', 'macro_f1'], ['Test accuracy', 'Test macro-F1']
+    ):
+        grouped = comparison.groupby('model')[metric]
+        means = grouped.mean()
+        spreads = grouped.std().fillna(0)
+        axis.bar(means.index, means.values, yerr=spreads.values, capsize=4)
+        axis.set(title=title, ylabel=metric.replace('_', ' '), ylim=(0, 1))
+        axis.tick_params(axis='x', rotation=25)
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / 'scratch_cnn_ablation_comparison.png', dpi=160)
+    plt.show()
+else:
+    print('Ablation sweep not run. Set RUN_ABLATION_SWEEP = True when ready.')
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-2</td>
+<td>Comment and a flag that turns the whole sweep on or off.</td>
+<td>Flag</td>
+<td>Lets the notebook be run without the long sweep.</td>
+</tr>
+<tr>
+<td>4-9</td>
+<td>Loads the saved <code>metrics.csv</code> if it exists, or makes an empty table with the right columns.</td>
+<td>Persistent results</td>
+<td>Results survive restarts. The table is shared with the data-efficiency study, which uses other fraction values.</td>
+</tr>
+<tr>
+<td>10-12</td>
+<td>Loops over the 3 settings, and for each one over seeds 0, 1, 2.</td>
+<td>Grid of experiments</td>
+<td>Nine runs in total: 3 settings times 3 seeds.</td>
+</tr>
+<tr>
+<td>13-20</td>
+<td>Checks whether that setting and seed already have a test result in the table; if so, prints a skip message and moves on.</td>
+<td>Resumable runs</td>
+<td>If the notebook stops halfway, rerunning does not repeat finished work. The filter <code>fraction == 1.0</code> keeps only the full-data rows.</td>
+</tr>
+<tr>
+<td>22-25</td>
+<td>For the baseline with seed 0, reuses the model trained in Lap 1 instead of training it again.</td>
+<td>Reuse</td>
+<td>Avoids training the same run twice.</td>
+</tr>
+<tr>
+<td>26-27</td>
+<td>Otherwise trains a new model with <code>train_one_model</code>.</td>
+<td>Training</td>
+<td>Each run selects its epoch by validation accuracy only.</td>
+</tr>
+<tr>
+<td>28-38</td>
+<td>Scores the test set once with the chosen weights. Stores the labels and predictions.</td>
+<td>Test set, <code>no_grad</code></td>
+<td>The test set is used only here, after the run is finished. It is not used to choose the epoch.</td>
+</tr>
+<tr>
+<td>40-46</td>
+<td>Makes one row with the setting name, seed, test accuracy and macro-F1.</td>
+<td>Accuracy and macro-F1</td>
+<td>Macro-F1 gives each class equal weight, which is fair when some classes are smaller.</td>
+</tr>
+<tr>
+<td>47-51</td>
+<td>Saves the weights for this run as <code>&lt;model&gt;_seed&lt;n&gt;.pth</code>.</td>
+<td>Saving models</td>
+<td>Lets later notebooks reuse the models.</td>
+</tr>
+<tr>
+<td>52-59</td>
+<td>Replaces any old row for this setting and seed, then saves the table to CSV.</td>
+<td>Upsert</td>
+<td>A rerun cannot make duplicate rows. Saving after every run protects finished work.</td>
+</tr>
+<tr>
+<td>60</td>
+<td>Prints the best epoch and the row.</td>
+<td>Logging</td>
+<td>Gives a record of each run.</td>
+</tr>
+<tr>
+<td>62-66</td>
+<td>Keeps only the three settings, full data, and seeds 0, 1, 2.</td>
+<td>Filtering</td>
+<td>The table may hold other rows from the data-efficiency study.</td>
+</tr>
+<tr>
+<td>67-68</td>
+<td>Groups by setting and computes the mean and standard deviation of accuracy and macro-F1.</td>
+<td>Mean and standard deviation</td>
+<td>This creates the ablation table in the report. Pandas uses the sample standard deviation.</td>
+</tr>
+<tr>
+<td>70-79</td>
+<td>Draws two bar charts (accuracy and macro-F1) with error bars for the spread across seeds.</td>
+<td>Error bars</td>
+<td>Error bars show whether differences are bigger than the seed-to-seed spread, which is the question the plan asks.</td>
+</tr>
+<tr>
+<td>80-82</td>
+<td>Saves the comparison figure and displays it.</td>
+<td>Figure export</td>
+<td>Output goes to <code>results/figures/scratch_cnn_ablation_comparison.png</code>.</td>
+</tr>
+<tr>
+<td>83-84</td>
+<td>Prints a message if the sweep is turned off.</td>
+<td>Flag</td>
+<td>Keeps the notebook readable when the flag is False.</td>
+</tr>
+</tbody>
+</table>
+<p>The saved output for this cell shows all nine runs as "Skip", so the table and plot were read from <code>results/metrics.csv</code> in that session, not retrained. Two things to know about this cell. First, the plan asks for this loop to call the shared <code>train()</code> function from <code>src/train.py</code>. The notebook still uses its own helper, because the notebook text says <code>train.py</code> is a TODO. My search of <code>src/train.py</code> for "TODO" found nothing, so check whether the shared trainer is now finished. Second, the plan's optional third ablation (augmentation off) was not run.</p>
+<h2>The architecture layer by layer</h2>
+<p>Shapes are per image (channels x height x width). A batch adds a first number N, so a batch of 64 images has the shape 64 x 3 x 64 x 64. The rows below come from running the real code on a 3 x 64 x 64 input. Dropout is not in the list because <code>dropout=0.0</code>.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Layer</th>
+<th>Input shape</th>
+<th>Output shape</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Conv2d, 3 to 32, kernel 3, padding 1</td>
+<td>3 x 64 x 64</td>
+<td>32 x 64 x 64</td>
+<td>896</td>
+</tr>
+<tr>
+<td>1</td>
+<td>BatchNorm2d (32)</td>
+<td>32 x 64 x 64</td>
+<td>32 x 64 x 64</td>
+<td>64</td>
+</tr>
+<tr>
+<td>2</td>
+<td>ReLU</td>
+<td>32 x 64 x 64</td>
+<td>32 x 64 x 64</td>
+<td>0</td>
+</tr>
+<tr>
+<td>3</td>
+<td>MaxPool2d, 2 x 2</td>
+<td>32 x 64 x 64</td>
+<td>32 x 32 x 32</td>
+<td>0</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Conv2d, 32 to 64, kernel 3, padding 1</td>
+<td>32 x 32 x 32</td>
+<td>64 x 32 x 32</td>
+<td>18,496</td>
+</tr>
+<tr>
+<td>5</td>
+<td>BatchNorm2d (64)</td>
+<td>64 x 32 x 32</td>
+<td>64 x 32 x 32</td>
+<td>128</td>
+</tr>
+<tr>
+<td>6</td>
+<td>ReLU</td>
+<td>64 x 32 x 32</td>
+<td>64 x 32 x 32</td>
+<td>0</td>
+</tr>
+<tr>
+<td>7</td>
+<td>MaxPool2d, 2 x 2</td>
+<td>64 x 32 x 32</td>
+<td>64 x 16 x 16</td>
+<td>0</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Conv2d, 64 to 128, kernel 3, padding 1</td>
+<td>64 x 16 x 16</td>
+<td>128 x 16 x 16</td>
+<td>73,856</td>
+</tr>
+<tr>
+<td>9</td>
+<td>BatchNorm2d (128)</td>
+<td>128 x 16 x 16</td>
+<td>128 x 16 x 16</td>
+<td>256</td>
+</tr>
+<tr>
+<td>10</td>
+<td>ReLU</td>
+<td>128 x 16 x 16</td>
+<td>128 x 16 x 16</td>
+<td>0</td>
+</tr>
+<tr>
+<td>11</td>
+<td>MaxPool2d, 2 x 2</td>
+<td>128 x 16 x 16</td>
+<td>128 x 8 x 8</td>
+<td>0</td>
+</tr>
+<tr>
+<td>12</td>
+<td>AdaptiveAvgPool2d(1), global average pooling</td>
+<td>128 x 8 x 8</td>
+<td>128 x 1 x 1</td>
+<td>0</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Flatten</td>
+<td>128 x 1 x 1</td>
+<td>128</td>
+<td>0</td>
+</tr>
+<tr>
+<td>14</td>
+<td>Linear, 128 to 10</td>
+<td>128</td>
+<td>10 (logits)</td>
+<td>1,290</td>
+</tr>
+<tr>
+<td></td>
+<td><strong>Total trainable parameters</strong></td>
+<td></td>
+<td></td>
+<td><strong>94,986</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>How 94,986 is computed.</strong> Three rules cover every learned number:</p>
+<ul>
+<li>A convolution has out x in x kernel_height x kernel_width weights, plus one bias per output channel. Block 1: 32 x 3 x 3 x 3 + 32 = 864 + 32 = 896. Block 2: 64 x 32 x 3 x 3 + 64 = 18,432 + 64 = 18,496. Block 3: 128 x 64 x 3 x 3 + 128 = 73,728 + 128 = 73,856.</li>
+<li>A BatchNorm layer has two learned numbers per channel (gamma and beta). So 2 x 32 = 64, 2 x 64 = 128, and 2 x 128 = 256.</li>
+<li>A linear layer has in x out weights plus out biases: 128 x 10 + 10 = 1,290.</li>
+</ul>
+<p>Adding them: 896 + 64 + 18,496 + 128 + 73,856 + 256 + 1,290 = 94,986. PyTorch's own count, <code>sum(p.numel() for p in model.parameters())</code>, gives the same number.</p>
+<p>BatchNorm also stores a running mean and a running variance per channel. These are buffers, not parameters. They add 2 x 224 = 448 stored numbers, plus 3 counters, which is 451 buffer values in total. Adam never updates them; BatchNorm updates them itself during training.</p>
+<p>A rough compute figure, from the convolution sizes (my own estimate): about 41.3 million multiply-adds per image, of which about 18.9 million are in each of blocks 2 and 3.</p>
+<p><strong>The two ablation models, same rules:</strong></p>
+<ul>
+<li>No BatchNorm: 94,986 minus the 448 gamma and beta values = <strong>94,538</strong>.</li>
+<li>Depth 2: block 1 (896 + 64) + block 2 (18,496 + 128) + linear 64 to 10 (640 + 10 = 650) = <strong>20,234</strong>.</li>
+</ul>
+<p>Note that the depth-2 model is about a fifth of the size of the baseline, so the depth change also reduces capacity. This matters for the ablation discussion below.</p>
+<h2>The ablations</h2>
+<p><strong>What changed.</strong> Each ablation changes one switch and keeps everything else the same:</p>
+<table>
+<thead>
+<tr>
+<th>Run</th>
+<th>Switch changed</th>
+<th>What the network looks like</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Baseline</td>
+<td>none</td>
+<td>3 blocks, BatchNorm on, dropout 0, 94,986 parameters</td>
+</tr>
+<tr>
+<td>No BatchNorm</td>
+<td><code>use_batchnorm=False</code></td>
+<td>The same 3 blocks, but the three BatchNorm layers are removed, 94,538 parameters</td>
+</tr>
+<tr>
+<td>Depth 2</td>
+<td><code>depth=2</code></td>
+<td>Only blocks 1 and 2 (32 and 64 filters). The global average pool now sees 64 values, 20,234 parameters</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why one thing at a time.</strong> If we changed two things together, we could not tell which one caused a difference. Because the switches live in one function, each run differs from the baseline only in the switch.</p>
+<p><strong>Results.</strong> Test scores, mean and sample standard deviation over seeds 0, 1 and 2 (from <code>results/metrics.csv</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th style="text-align: right;">Test accuracy (mean ± std)</th>
+<th style="text-align: right;">Test macro-F1 (mean ± std)</th>
+<th>Accuracy per seed (0, 1, 2)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Baseline</td>
+<td style="text-align: right;">92.72% ± 0.45%</td>
+<td style="text-align: right;">92.48% ± 0.51%</td>
+<td>93.14, 92.77, 92.25</td>
+</tr>
+<tr>
+<td>No BatchNorm</td>
+<td style="text-align: right;">88.95% ± 0.63%</td>
+<td style="text-align: right;">88.45% ± 0.64%</td>
+<td>88.22, 89.31, 89.33</td>
+</tr>
+<tr>
+<td>Depth 2</td>
+<td style="text-align: right;">85.31% ± 1.43%</td>
+<td style="text-align: right;">84.18% ± 1.78%</td>
+<td>84.44, 84.52, 86.96</td>
+</tr>
+</tbody>
+</table>
+<p>Changes from the baseline:</p>
+<ul>
+<li>No BatchNorm: accuracy down 3.76 points, macro-F1 down 4.03 points.</li>
+<li>Depth 2: accuracy down 7.41 points, macro-F1 down 8.30 points.</li>
+</ul>
+<p><strong>Is the difference bigger than the seed spread?</strong> For both ablations the answer is yes, with 3 seeds.</p>
+<ul>
+<li>The ranges do not overlap. The worst baseline seed (92.25%) is above the best no-BatchNorm seed (89.33%) and the best depth-2 seed (86.96%).</li>
+<li>The baseline beats each ablation on every seed, by at least 2.92 points for no-BatchNorm (pairs: 4.92, 3.46, 2.92) and at least 5.29 points for depth 2 (pairs: 8.70, 8.25, 5.29).</li>
+<li>The gap between the means, divided by the combined spread (the square root of the sum of the squared standard deviations), is about 4.8 for BatchNorm and about 4.9 for depth 2. That is a rough check, not a formal significance test. With three seeds a formal test would have very few degrees of freedom, so we report it as a clear but informal result.</li>
+</ul>
+<p>The seeds are shared across settings (seed 0 is seed 0 for each model), but the architectures differ, so the initial weights are not the same. Do not claim more than "the same seed number".</p>
+<p><strong>What this does and does not prove.</strong></p>
+<ul>
+<li>BatchNorm helps this model on this data, with this learning rate and batch size. It does not show that BatchNorm helps every CNN.</li>
+<li>The depth ablation changes two things together: the number of blocks and the number of parameters (95k to 20k). So we cannot say that depth alone is responsible. It is "a smaller, shallower model", which is weaker.</li>
+<li>We picked the baseline and the ablations before running them, and we did not tune anything on the test set.</li>
+</ul>
+<h2>How to read the learning curves</h2>
+<p>The figure <code>results/figures/scratch_cnn_learning_curves.png</code> has two panels, both for seed 0 over 20 epochs. The numbers below come from <code>results/figures/scratch_cnn_seed0_history.json</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Epoch</th>
+<th style="text-align: right;">Train loss</th>
+<th style="text-align: right;">Val loss</th>
+<th style="text-align: right;">Train accuracy</th>
+<th style="text-align: right;">Val accuracy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td style="text-align: right;">0.912</td>
+<td style="text-align: right;">0.667</td>
+<td style="text-align: right;">69.5%</td>
+<td style="text-align: right;">77.9%</td>
+</tr>
+<tr>
+<td>5</td>
+<td style="text-align: right;">0.419</td>
+<td style="text-align: right;">0.574</td>
+<td style="text-align: right;">85.7%</td>
+<td style="text-align: right;">80.7%</td>
+</tr>
+<tr>
+<td>10</td>
+<td style="text-align: right;">0.283</td>
+<td style="text-align: right;">0.335</td>
+<td style="text-align: right;">90.2%</td>
+<td style="text-align: right;">87.9%</td>
+</tr>
+<tr>
+<td>14</td>
+<td style="text-align: right;">0.240</td>
+<td style="text-align: right;">0.248</td>
+<td style="text-align: right;">91.6%</td>
+<td style="text-align: right;">91.6%</td>
+</tr>
+<tr>
+<td>16</td>
+<td style="text-align: right;">0.230</td>
+<td style="text-align: right;">0.560</td>
+<td style="text-align: right;">91.9%</td>
+<td style="text-align: right;">83.5%</td>
+</tr>
+<tr>
+<td>20</td>
+<td style="text-align: right;">0.204</td>
+<td style="text-align: right;">0.224</td>
+<td style="text-align: right;">93.0%</td>
+<td style="text-align: right;">92.6%</td>
+</tr>
+</tbody>
+</table>
+<p>What the panels show:</p>
+<ul>
+<li><strong>Loss.</strong> Both losses fall from about 0.9 and 0.7 to about 0.2. Validation loss is noisy: it jumps to 0.80 at epoch 2, to 0.56 at epoch 16 and to 0.40 at epoch 19. These spikes mean the model sometimes becomes less confident on validation images in one epoch, then recovers. The learning rate is constant (no schedule), which is one likely cause.</li>
+<li><strong>Accuracy.</strong> Training accuracy rises steadily. Validation accuracy also rises, but it dips at epochs 2, 15 and 16 (83.5% at epoch 16). It finishes highest at epoch 20 with 92.64%, so that epoch is the saved checkpoint.</li>
+<li><strong>The gap.</strong> At epoch 10 the gap is about 2.3 points (90.2% train, 87.9% val). At epoch 14 the two accuracies are equal. At epoch 20 the gap is about 0.3 points. So there is no sign of overfitting at the end, because validation kept up with training. Overfitting would show as a widening gap, with validation flat or falling while training keeps rising.</li>
+<li><strong>Chance.</strong> The dotted line at 10% is chance for 10 balanced classes. Even in epoch 1, training accuracy (69.5%) and validation accuracy (77.9%) are far above guessing.</li>
+</ul>
+<p>Two cautions for the viva. Training accuracy is measured during each epoch, on augmented images, while the weights are still changing, so it is not the same as scoring the training set at the end. And the curves are for one seed; the seed-to-seed spread is in the ablation table, not in the curves.</p>
+<h2>Website pages Tejash built</h2>
+<h3>The classifier page: <code>frontend/app.html</code></h3>
+<p>The classifier page lets a user drop, click to choose, or paste an image (or click one of four sample patches). It shows:</p>
+<ul>
+<li>the predicted class and a confidence ring (the top probability),</li>
+<li>a bar chart of the top 3 classes with their probabilities,</li>
+<li>a Grad-CAM heat map over the image, with a slider for its strength,</li>
+<li>a short "What it looks for" sentence, taken from a fixed list of 10 hand-written sentences, one per class.</li>
+</ul>
+<p>The page also has a Results tab (<code>#results</code>). It shows the test accuracy and macro-F1 with a counting animation, a 10 x 10 confusion matrix (rows are true classes, columns are predictions, blue is correct), and an accuracy-against-training-data chart with a line for the scratch CNN and one for the pre-trained model.</p>
+<p><strong>Two modes.</strong> The page starts in <strong>demo mode</strong> (the status pill says "Demo mode: simulated results") when the address has no <code>?api=</code>. In demo mode the predictions come from a fake function that uses the average colour of the image, and the heat map is a generated blob. This is not our CNN. When the page is opened as <code>app.html?api=http://localhost:8000</code> and <code>/api/models</code> answers, the pill says "Backend connected" and every prediction comes from the server. If a prediction fails in live mode, the page shows an error and then displays a simulated result, so the team should watch the status pill during the demo.</p>
+<p><strong>How it calls the API.</strong> The routes are in <code>frontend/API.md</code>, and the server that implements them is <code>Backend/app/server.py</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Call from the page</th>
+<th>Route</th>
+<th>What the page sends</th>
+<th>What it uses from the reply</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>On load (live mode only)</td>
+<td><code>GET /api/models</code></td>
+<td>nothing</td>
+<td><code>models</code> list, filled into the model dropdown as <code>id</code> and <code>label</code></td>
+</tr>
+<tr>
+<td>When an image is chosen</td>
+<td><code>POST /api/predict</code></td>
+<td>multipart form: <code>image</code> (the file) and <code>model</code> (the id from the dropdown)</td>
+<td><code>label</code>, <code>confidence</code>, <code>top3</code>, <code>gradcam</code> (a PNG as a data URL)</td>
+</tr>
+<tr>
+<td>Opening the Results tab (live mode)</td>
+<td><code>GET /api/metrics</code></td>
+<td>nothing</td>
+<td><code>accuracy</code>, <code>macro_f1</code>, <code>confusion</code> (10 x 10), <code>efficiency</code> (<code>fractions</code>, <code>scratch</code>, <code>transfer</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Some details to know:</p>
+<ul>
+<li><code>/api/predict</code> returns the top 3 classes with a softmax probability each, and a Grad-CAM overlay the same size as the input. The page sets it as the <code>src</code> of an image and overlays it on the uploaded picture.</li>
+<li>The class names must match the EuroSAT folder names exactly, because the page looks up its "What it looks for" sentence by name.</li>
+<li>The server allows all origins (CORS), which the page needs when it is served from a different address.</li>
+<li>The server finds models from files in <code>Backend/models/</code>. It expects names like <code>&lt;model&gt;_frac1_seed0.pth</code>. The API.md example lists only <code>resnet18</code>, while the page's demo dropdown uses an id called <code>scratch</code>. The real id must come from the server. I read the three route definitions and the predict code, but not the helper that lists the weights, so I cannot confirm the exact ids.</li>
+</ul>
+<h3>The landing page: <code>frontend/Eyes_in_the_Sky_landing.html</code></h3>
+<p>The landing page is one static HTML file of about 810 lines and 222 KB. It has no calls to the API. Its numbers are written into the page. The structure, from top to bottom:</p>
+<ul>
+<li>a hero with the title "Eyes in the Sky" and two buttons, "Start the story" (to the story chapters) and "Try the classifier" (to <code>app.html</code>);</li>
+<li>a navigation bar, plus a chapter list (an "orbit" nav) that highlights the current chapter as you scroll;</li>
+<li>"Ten kinds of ground to tell apart" (<code>#classes</code>), with a tile for each class;</li>
+<li>"How much labelled data does it need?" (<code>#data</code>), a data-efficiency explorer that draws the scratch CNN and the pre-trained model from a <code>DATA</code> object in the script;</li>
+<li>"Six phases, one pipeline" (<code>#pipeline</code>), with the six phases: understand the data, build a baseline CNN, borrow pre-trained eyes, measure data efficiency, evaluate and explain, and document and submit;</li>
+<li>a team section listing each member and what they own;</li>
+<li>"Frequently asked questions" (<code>#desk</code>).</li>
+</ul>
+<p>The page animates its content with scroll and timed effects. Many of its visual details are not my focus here; the important point is that the page does not check the API.</p>
+<h2>Things to check before the viva</h2>
+<p>These are gaps and mismatches I found while reading. Fix them before the Friday demo.</p>
+<ol>
+<li><strong>Draft and log numbers do not match the saved history.</strong> The draft and the log say the best validation accuracy was 93.01% at epoch 20, the final training accuracy 92.88%, the validation loss at the end 0.210, and the training loss at the end 0.203. The saved JSON (<code>scratch_cnn_seed0_history.json</code>) gives 92.64%, 92.97%, 0.224 and 0.204. I could not find which run the draft numbers came from. Use the JSON values, or re-run, and correct the draft.</li>
+<li><strong>The landing page team list swaps two people.</strong> In the <code>TEAM</code> list, Tejash is marked "Data and EDA" and Shrivalli is marked "Scratch CNN and ablations". These should be the other way round. The spelling "Shrivalli" also differs from "Srivalli" in other files.</li>
+<li><strong>The landing page scratch number is seed 0, not the mean.</strong> The explorer shows "Scratch CNN 93.1", which is the seed-0 test accuracy (93.14%). Our three-seed mean is 92.7%. Say so, or use the mean.</li>
+<li><strong>Weight file names may not match the server.</strong> The notebook saves <code>scratch_cnn_baseline_seed0.pth</code> and <code>scratch_cnn_seed0.pth</code>. The server looks for <code>&lt;model&gt;_frac1_seed0.pth</code>. The <code>models/</code> folder has <code>scratch_cnn_frac1_seed0.pth</code>, which this notebook does not write. Check where that file came from before the demo.</li>
+<li><strong>The shared trainer note may be out of date.</strong> The notebook says <code>src/train.py</code> is a TODO. My search found no "TODO" in that file. If the shared <code>train()</code> is finished, the plan asks us to connect the Lap 2 sweep to it.</li>
+<li><strong>The augmentation-off ablation was not run.</strong> It was optional in the plan. Say so if asked.</li>
+<li><strong>The sample patches are drawn colour blocks,</strong> not real EuroSAT tiles. They are useful for showing the model can give confident answers on images outside its world, but do not present them as data.</li>
+<li><strong>The metrics CSV is shared.</strong> Rows with fractions below 1.0 belong to the data-efficiency study (Nitin's part). My comparison filters to fraction 1.0 and seeds 0, 1 and 2.</li>
+</ol></body></html>

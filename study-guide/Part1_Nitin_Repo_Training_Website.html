@@ -1,0 +1,4387 @@
+<!doctype html><html><head><meta charset='utf-8'><title>Part1_Nitin_Repo_Training_Website</title><style>
+@page { size: A4; margin: 16mm 14mm; }
+body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10pt; line-height: 1.4; color:#111; }
+h1 { font-size: 20pt; color:#1f3a5f; border-bottom: 3px solid #1f3a5f; padding-bottom:4px; }
+h2 { font-size: 14pt; color:#1f3a5f; margin-top:18px; border-bottom:1px solid #ccc; }
+h3 { font-size: 11.5pt; color:#2b5d8a; margin-top:14px; }
+table { border-collapse: collapse; width:100%; margin:6px 0 10px; font-size:9pt; page-break-inside:auto; }
+th, td { border:1px solid #bbb; padding:3px 5px; vertical-align:top; text-align:left; }
+th { background:#e8eef5; }
+tr { page-break-inside: avoid; }
+pre { background:#f4f5f7; border:1px solid #ddd; padding:6px; font-family: Consolas, 'Courier New', monospace; font-size:7.6pt; line-height:1.25; white-space:pre-wrap; word-wrap:break-word; page-break-inside:auto; }
+code { font-family: Consolas, 'Courier New', monospace; font-size:8.8pt; background:#f1f1f1; padding:0 2px; }
+pre code { background:none; padding:0; font-size:7.6pt; }
+blockquote { border-left:3px solid #8aa; margin:6px 0; padding:2px 10px; color:#333; background:#f7fbfb; }
+</style></head><body><h1>Part 1 – Nitin (Team leader): Repository, shared training, data efficiency, website server</h1>
+<p>This section explains every function and every block of code that Nitin wrote or owns. Read it with the files open. Each code block is copied from the real file. Line numbers come from the file as it is in the repository (folder <code>Backend/</code>).</p>
+<hr />
+<h2>What my part is</h2>
+<p>Nitin is the team leader. His part is the glue that makes the whole project fair and repeatable. He wrote <code>src/utils.py</code>, which gives everyone the same seed method, the same device choice and the same folder paths. He wrote <code>src/train.py</code>, which holds one shared <code>train()</code> function. Every model in the project (our own CNN, ResNet-18, MobileNetV2) is trained and scored by that one function, so the numbers can be compared. He ran the data-efficiency study in <code>notebooks/05_data_efficiency.ipynb</code>, which trains the two main models on 5% to 100% of the training images. He wrote <code>check_setup.py</code>, which checks each laptop before the team starts. He owns <code>results/metrics.csv</code>, the table where every finished run is recorded, and the root <code>README.md</code>. The website server <code>app/server.py</code> and the Grad-CAM control experiment <code>src/gradcam_sanity_check.py</code> were also added to his part, and <code>.gitignore</code> and <code>requirements.txt</code> keep the repository clean and the packages the same on every laptop.</p>
+<hr />
+<h2>Definitions</h2>
+<p>Simple meanings of the technical words used in the code and in this section.</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Plain meaning (used in our code)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Seed</td>
+<td>A starting number for a random-number generator. The same seed gives the same "random" numbers, so a run can be repeated.</td>
+</tr>
+<tr>
+<td>Random-number generator</td>
+<td>A tool that produces numbers that look random. Python, numpy and PyTorch each have their own.</td>
+</tr>
+<tr>
+<td>Reproducibility</td>
+<td>Getting the same result again when you run the same code with the same seed on the same kind of machine.</td>
+</tr>
+<tr>
+<td>Epoch</td>
+<td>One full pass over all the training images.</td>
+</tr>
+<tr>
+<td>Batch</td>
+<td>A small group of images (64 here) that is used for one weight update.</td>
+</tr>
+<tr>
+<td>Iteration / step</td>
+<td>One batch: forward pass, loss, backward pass, weight update.</td>
+</tr>
+<tr>
+<td>Weights (parameters)</td>
+<td>The numbers inside the network that are learned during training.</td>
+</tr>
+<tr>
+<td>Forward pass</td>
+<td>Running an image through the network to get the scores.</td>
+</tr>
+<tr>
+<td>Scores (logits)</td>
+<td>The raw numbers the network outputs for each class before turning them into probabilities.</td>
+</tr>
+<tr>
+<td>Loss</td>
+<td>A number that says how wrong the model is. Training tries to make it smaller.</td>
+</tr>
+<tr>
+<td>Cross-entropy loss</td>
+<td>The standard loss for choosing one class out of several. <code>torch.nn.CrossEntropyLoss</code> in our code.</td>
+</tr>
+<tr>
+<td>Gradient</td>
+<td>How much the loss would change if one weight changed a little. It tells the optimiser which way to move each weight.</td>
+</tr>
+<tr>
+<td>Backward pass (<code>backward</code>)</td>
+<td>Work out the gradient of the loss for every weight.</td>
+</tr>
+<tr>
+<td>Optimiser</td>
+<td>The rule that changes the weights using the gradients.</td>
+</tr>
+<tr>
+<td>Adam</td>
+<td>A popular optimiser. It adapts the step size for each weight. Our optimiser.</td>
+</tr>
+<tr>
+<td>Learning rate</td>
+<td>The size of each weight update. Bigger means bigger steps.</td>
+</tr>
+<tr>
+<td><code>zero_grad</code></td>
+<td>Clears the gradients from the last batch, so they do not add up across batches.</td>
+</tr>
+<tr>
+<td><code>step</code></td>
+<td>Applies the optimiser's update to the weights.</td>
+</tr>
+<tr>
+<td>Training mode / <code>model.train()</code></td>
+<td>Switches layers such as BatchNorm and Dropout to the behaviour used during training.</td>
+</tr>
+<tr>
+<td>Evaluation mode / <code>model.eval()</code></td>
+<td>Switches the same layers to the behaviour used for scoring. BatchNorm uses saved averages, Dropout is off.</td>
+</tr>
+<tr>
+<td><code>torch.no_grad()</code></td>
+<td>A block where PyTorch does not track gradients. Used for scoring, which saves memory and time.</td>
+</tr>
+<tr>
+<td><code>requires_grad</code></td>
+<td>A flag on each weight. If it is False, the weight is never updated. Frozen layers have it set to False.</td>
+</tr>
+<tr>
+<td>Convolution (Conv2d)</td>
+<td>A small filter that slides over the image and finds local patterns such as edges and textures.</td>
+</tr>
+<tr>
+<td>BatchNorm</td>
+<td>A layer that rescales the values of each feature map using the batch's average and spread. It helps training to be stable.</td>
+</tr>
+<tr>
+<td>ReLU</td>
+<td>An activation function. It keeps positive values and turns negative values into zero.</td>
+</tr>
+<tr>
+<td>MaxPool</td>
+<td>Keeps the largest value in each 2 x 2 square, which halves the width and height.</td>
+</tr>
+<tr>
+<td>Linear layer</td>
+<td>A fully connected layer. It turns a list of features into one score per class.</td>
+</tr>
+<tr>
+<td>Dropout</td>
+<td>Randomly switches off some values during training to reduce over-fitting. Our scratch CNN has it off.</td>
+</tr>
+<tr>
+<td>Over-fitting</td>
+<td>When a model learns the training images too well and does worse on new images.</td>
+</tr>
+<tr>
+<td>Under-training</td>
+<td>When a model has not had enough weight updates to learn well.</td>
+</tr>
+<tr>
+<td>Validation set</td>
+<td>The 15% of the images we use to make decisions during training (here: which epoch to keep).</td>
+</tr>
+<tr>
+<td>Test set</td>
+<td>The 15% of the images we score only once, at the end, for the final number.</td>
+</tr>
+<tr>
+<td>Split</td>
+<td>The division of all images into train, validation and test. Fixed by <code>data/splits.csv</code>.</td>
+</tr>
+<tr>
+<td>Stratified</td>
+<td>Each class keeps the same share in every part of a split or subset.</td>
+</tr>
+<tr>
+<td>Fraction</td>
+<td>The share of the training images that a run uses (0.05 means 5%).</td>
+</tr>
+<tr>
+<td>Best-epoch checkpoint</td>
+<td>A saved copy of the weights from the epoch with the best validation accuracy.</td>
+</tr>
+<tr>
+<td><code>state_dict</code></td>
+<td>A Python dictionary that holds all the weights (and BatchNorm averages) of a model, by name.</td>
+</tr>
+<tr>
+<td><code>load_state_dict</code></td>
+<td>Puts saved weights back into a model.</td>
+</tr>
+<tr>
+<td><code>torch.save</code> / <code>torch.load</code></td>
+<td>Write and read a file with tensors or a state dictionary. <code>weights_only=True</code> loads only plain numbers, which is safer.</td>
+</tr>
+<tr>
+<td><code>map_location="cpu"</code></td>
+<td>Loads saved weights onto the CPU, even when they were saved from a GPU.</td>
+</tr>
+<tr>
+<td>Tensor</td>
+<td>PyTorch's name for a multi-dimensional array of numbers.</td>
+</tr>
+<tr>
+<td>Device</td>
+<td>The chip that does the work: <code>"cuda"</code> (NVIDIA GPU) or <code>"cpu"</code>.</td>
+</tr>
+<tr>
+<td>CUDA</td>
+<td>NVIDIA's system that lets PyTorch run on the GPU.</td>
+</tr>
+<tr>
+<td>cuDNN</td>
+<td>NVIDIA's library of fast convolution routines. Two switches control its behaviour in <code>set_seed</code>.</td>
+</tr>
+<tr>
+<td><code>cudnn.deterministic</code></td>
+<td>When True, the GPU always uses the same convolution method, so results repeat.</td>
+</tr>
+<tr>
+<td><code>cudnn.benchmark</code></td>
+<td>When True, the GPU tests several methods and keeps the fastest. We switch it off for repeatability.</td>
+</tr>
+<tr>
+<td>Pixel values (bytes, 0 to 255)</td>
+<td>The raw colour values of an image, stored as whole numbers.</td>
+</tr>
+<tr>
+<td><code>uint8</code></td>
+<td>A data type for whole numbers from 0 to 255. Our images are kept in this type to save memory.</td>
+</tr>
+<tr>
+<td>In-memory cache</td>
+<td>Data read once and kept in RAM or GPU memory so it is not read again.</td>
+</tr>
+<tr>
+<td><code>permute</code> / <code>contiguous</code></td>
+<td>Reorder the axes of a tensor (here from height-width-colour to colour-height-width), and make the memory layout continuous.</td>
+</tr>
+<tr>
+<td>Normalisation</td>
+<td>Subtracting the mean and dividing by the standard deviation of each colour channel.</td>
+</tr>
+<tr>
+<td>ImageNet mean and std</td>
+<td>The average and spread of the colours in the ImageNet photos. The team uses these numbers for every model.</td>
+</tr>
+<tr>
+<td>Pretrained model</td>
+<td>A model whose weights were already learned on a big dataset (ImageNet here).</td>
+</tr>
+<tr>
+<td>Transfer learning</td>
+<td>Re-using a pretrained model for a new task.</td>
+</tr>
+<tr>
+<td>Fine-tuning (full)</td>
+<td>Training all layers of a pretrained model, usually with a small learning rate.</td>
+</tr>
+<tr>
+<td>Frozen backbone</td>
+<td>The pretrained layers are kept fixed and only the new last layer learns.</td>
+</tr>
+<tr>
+<td>Augmentation</td>
+<td>Random changes to training images (here: 90-degree turns and flips) that make the model more robust.</td>
+</tr>
+<tr>
+<td>Label-safe augmentation</td>
+<td>Changes that do not change the true class. A rotated field is still a field.</td>
+</tr>
+<tr>
+<td>Accuracy</td>
+<td>The share of images whose predicted class is correct.</td>
+</tr>
+<tr>
+<td>Macro-F1</td>
+<td>The F1 score (a mix of precision and recall) calculated for each class and then averaged with equal weight for each class.</td>
+</tr>
+<tr>
+<td>Precision</td>
+<td>Of the images we labelled as a class, how many really were that class.</td>
+</tr>
+<tr>
+<td>Recall</td>
+<td>Of the images that really are a class, how many we found.</td>
+</tr>
+<tr>
+<td>Confusion matrix</td>
+<td>A table: one row per true class, one column per predicted class.</td>
+</tr>
+<tr>
+<td>Mean</td>
+<td>The average of several runs.</td>
+</tr>
+<tr>
+<td>Standard deviation (SD)</td>
+<td>How much the runs spread around the mean.</td>
+</tr>
+<tr>
+<td>Sample SD, <code>ddof=1</code></td>
+<td>The SD that divides by (number of runs minus 1). Correct for a small sample of seeds. <code>ddof</code> is the "delta degrees of freedom" setting.</td>
+</tr>
+<tr>
+<td>Mean ± SD</td>
+<td>We write the average and the spread together, for example 93.69 ± 0.20.</td>
+</tr>
+<tr>
+<td>Error bar</td>
+<td>A line on a plot that shows the spread (here one SD).</td>
+</tr>
+<tr>
+<td>Log scale</td>
+<td>An axis where equal steps mean equal ratios (1, 10, 100, 1000), not equal differences.</td>
+</tr>
+<tr>
+<td><code>redirect_stdout</code></td>
+<td>A way to hide printed text inside a block. We use it to hide the per-epoch lines.</td>
+</tr>
+<tr>
+<td>Resumable loop</td>
+<td>A loop that skips work already saved, so it can be stopped and started again.</td>
+</tr>
+<tr>
+<td>Idempotent</td>
+<td>Running the same action twice gives the same final result, with no duplicates.</td>
+</tr>
+<tr>
+<td><code>__main__</code> guard</td>
+<td><code>if __name__ == "__main__":</code>. The code under it runs only when the file is started directly, not when it is imported.</td>
+</tr>
+<tr>
+<td><code>assert</code></td>
+<td>A check that stops the program with a message if the statement is False.</td>
+</tr>
+<tr>
+<td>Docstring</td>
+<td>The text in triple quotes under a <code>def</code> line that explains what the function does.</td>
+</tr>
+<tr>
+<td><code>pathlib.Path</code></td>
+<td>A tool to handle file paths as objects. <code>/</code> joins path parts.</td>
+</tr>
+<tr>
+<td><code>__file__</code> / <code>.resolve()</code></td>
+<td>The address of the current file, and its full, absolute form.</td>
+</tr>
+<tr>
+<td>Constant</td>
+<td>A name in capitals (for example <code>BATCH_SIZE</code>) that is not changed while the program runs.</td>
+</tr>
+<tr>
+<td>Dictionary</td>
+<td>A table of key and value pairs, for example model name to settings.</td>
+</tr>
+<tr>
+<td>Default argument</td>
+<td>A value a function uses when the caller does not give one.</td>
+</tr>
+<tr>
+<td>Cache key</td>
+<td>The name under which a cached item is stored in a dictionary.</td>
+</tr>
+<tr>
+<td><code>torch.Generator</code></td>
+<td>A separate random-number generator object, so one part of the code can have its own repeatable sequence.</td>
+</tr>
+<tr>
+<td><code>randperm</code></td>
+<td>Returns a random ordering of the numbers 0 to n minus 1. Used to shuffle the training rows.</td>
+</tr>
+<tr>
+<td><code>argmax</code></td>
+<td>The position of the largest value. We use it to pick the predicted class.</td>
+</tr>
+<tr>
+<td>Softmax</td>
+<td>Turns scores into probabilities that add up to 1. Used in the website server.</td>
+</tr>
+<tr>
+<td>Top-k</td>
+<td>The k largest values and their positions. Used for the top-3 guesses and for the Grad-CAM patches.</td>
+</tr>
+<tr>
+<td>Grad-CAM</td>
+<td>A method that colours the parts of an image that pushed the model to its answer.</td>
+</tr>
+<tr>
+<td>Hook (PyTorch)</td>
+<td>A function that PyTorch calls when a layer runs forward or backward. Grad-CAM uses hooks to read activations and gradients.</td>
+</tr>
+<tr>
+<td>Feature map</td>
+<td>The output of one filter over the image.</td>
+</tr>
+<tr>
+<td>Hyperparameter</td>
+<td>A setting chosen by us, not learned (batch size, epochs, learning rate).</td>
+</tr>
+<tr>
+<td>FastAPI</td>
+<td>A Python web framework. A decorated function such as <code>@app.get(...)</code> becomes a web address (route).</td>
+</tr>
+<tr>
+<td>Route / endpoint</td>
+<td>A web address and the function that answers it. For example <code>/api/models</code>.</td>
+</tr>
+<tr>
+<td>JSON</td>
+<td>A text format for data sent between the server and the web page.</td>
+</tr>
+<tr>
+<td>Multipart upload</td>
+<td>A way for a web form to send a file.</td>
+</tr>
+<tr>
+<td><code>UploadFile</code>, <code>File(...)</code>, <code>Form(None)</code></td>
+<td>FastAPI types. <code>File(...)</code> means the file is required. <code>Form(None)</code> means an optional text field.</td>
+</tr>
+<tr>
+<td>Uvicorn</td>
+<td>The program that runs a FastAPI app and listens for web requests.</td>
+</tr>
+<tr>
+<td>CORS</td>
+<td>Rules that let a web page on one address call the server on another address. We allow all, as the API document asks.</td>
+</tr>
+<tr>
+<td>Static files</td>
+<td>Files (HTML, CSS, JavaScript, images) that the server sends without running code.</td>
+</tr>
+<tr>
+<td>Data URL (base64)</td>
+<td>A way to put a whole image inside a text string, here the Grad-CAM picture.</td>
+</tr>
+<tr>
+<td>RGBA / alpha</td>
+<td>Colour with a fourth number for transparency.</td>
+</tr>
+<tr>
+<td>Colour map (<code>jet</code>)</td>
+<td>A table that turns a number from 0 to 1 into a colour from blue (low) to red (high).</td>
+</tr>
+<tr>
+<td>Bilinear resize</td>
+<td>Smooth resizing of an image by mixing neighbouring pixels.</td>
+</tr>
+<tr>
+<td>Pillow (PIL)</td>
+<td>The Python library that opens, converts and saves picture files.</td>
+</tr>
+<tr>
+<td>Lock (<code>threading.Lock</code>)</td>
+<td>A rule that lets only one thread run a block of code at a time.</td>
+</tr>
+<tr>
+<td>Decompression bomb</td>
+<td>A very large image file that is designed to use too much memory. Pillow raises an error for it.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>4. The code, block by block</h2>
+<h3>4.1 <code>src/utils.py</code> (all of it)</h3>
+<p>Why this file exists: three things are needed by every part. These are the same random seed method, the same way to choose a GPU or CPU, and the same folder names. If each person wrote their own, the results would not be comparable.</p>
+<pre><code class="language-python">import random
+from pathlib import Path
+
+import numpy as np
+import torch
+
+# ---------- paths ----------
+# This file is src/utils.py. .parent is the src folder, .parent.parent is the repo folder.
+# Everyone imports these names, so nobody types a path by hand (our folder name has spaces).
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / &quot;data&quot;
+MODELS_DIR = ROOT / &quot;models&quot;                # saved weights (*.pth), not in git
+RESULTS_DIR = ROOT / &quot;results&quot;
+FIGURES_DIR = RESULTS_DIR / &quot;figures&quot;
+SPLITS_CSV = DATA_DIR / &quot;splits.csv&quot;        # the fixed 70/15/15 split (part A)
+METRICS_CSV = RESULTS_DIR / &quot;metrics.csv&quot;   # one row per finished run (train() in part D)
+
+
+def set_seed(seed):
+    &quot;&quot;&quot;Make a run repeatable: the same seed gives the same random numbers.&quot;&quot;&quot;
+    random.seed(seed)                          # Python's own random numbers
+    np.random.seed(seed)                       # numpy's random numbers
+    torch.manual_seed(seed)                    # PyTorch's random numbers (CPU and GPU)
+    torch.backends.cudnn.deterministic = True  # the GPU uses the same convolution method every time
+    torch.backends.cudnn.benchmark = False     # do not let the GPU try methods and pick by speed
+    # note: two different laptops can still give slightly different numbers
+
+
+def get_device():
+    &quot;&quot;&quot;Return the GPU if PyTorch can use one, otherwise the CPU.&quot;&quot;&quot;
+    return torch.device(&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    # Tiny self-check. Run it with:  python -m src.utils
+    set_seed(0)
+    a = torch.rand(3)
+    set_seed(0)
+    b = torch.rand(3)
+    set_seed(1)
+    c = torch.rand(3)
+    assert torch.equal(a, b), &quot;the same seed must give the same numbers&quot;
+    assert not torch.equal(a, c), &quot;a different seed must give different numbers&quot;
+    for folder in (DATA_DIR, MODELS_DIR, RESULTS_DIR, FIGURES_DIR):
+        assert folder.is_dir(), f&quot;missing folder: {folder}&quot;
+    print(&quot;set_seed: OK (same seed gives the same numbers)&quot;)
+    print(&quot;get_device:&quot;, get_device())
+    print(&quot;paths: OK, repo folder is&quot;, ROOT)
+</code></pre>
+<p><strong>Imports and paths (lines 14 to 29)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>14</td>
+<td>Loads Python's built-in random-number tool.</td>
+<td>Standard library</td>
+<td><code>set_seed</code> must seed this one too, because some code picks random items with it.</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Loads <code>Path</code>, a tool that treats a file path as an object.</td>
+<td><code>pathlib</code></td>
+<td><code>/</code> joins path parts safely on Windows, so there are no long strings with backslashes. <code>os.path.join</code> also works but is older and clumsier.</td>
+</tr>
+<tr>
+<td>17</td>
+<td>Loads numpy, the number-array library.</td>
+<td>numpy</td>
+<td>scikit-learn (the split, the F1 score) and pandas use numpy's random numbers, so numpy is seeded too.</td>
+</tr>
+<tr>
+<td>18</td>
+<td>Loads PyTorch.</td>
+<td>PyTorch</td>
+<td>Our deep-learning library. The seed and the GPU check both come from it.</td>
+</tr>
+<tr>
+<td>23</td>
+<td><code>ROOT</code> is the repository folder. <code>__file__</code> is this file's address. <code>.resolve()</code> makes it full. Each <code>.parent</code> goes up one folder.</td>
+<td>Path relative to the file</td>
+<td>Works on any laptop and in any folder. A typed <code>C:\Users\...</code> path would work on one laptop only.</td>
+</tr>
+<tr>
+<td>24 to 27</td>
+<td><code>DATA_DIR</code>, <code>MODELS_DIR</code>, <code>RESULTS_DIR</code>, <code>FIGURES_DIR</code>: the four folders.</td>
+<td>Constants</td>
+<td>One place to change a folder name, and nobody types a path by hand.</td>
+</tr>
+<tr>
+<td>28</td>
+<td><code>SPLITS_CSV</code>: the file with the fixed 70/15/15 split.</td>
+<td>Constant</td>
+<td>Written by Srivalli's <code>make_split</code>. Everybody reads the split from here.</td>
+</tr>
+<tr>
+<td>29</td>
+<td><code>METRICS_CSV</code>: the results table.</td>
+<td>Constant</td>
+<td><code>train()</code> adds one row per finished run. The brief asks for all results in <code>results/metrics.csv</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>set_seed</code> (lines 32 to 39)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>32</td>
+<td>Defines the function. <code>seed</code> is any whole number.</td>
+<td>Function, seed</td>
+<td>The project uses seeds 0 to 4. The split uses 42.</td>
+</tr>
+<tr>
+<td>33</td>
+<td>The docstring says what the function is for.</td>
+<td>Docstring</td>
+<td>Anyone can read the purpose without reading the code.</td>
+</tr>
+<tr>
+<td>34</td>
+<td>Seeds Python's random numbers.</td>
+<td>Random seed</td>
+<td>Python's <code>random</code> picks some items in code.</td>
+</tr>
+<tr>
+<td>35</td>
+<td>Seeds numpy's random numbers.</td>
+<td>Random seed</td>
+<td>scikit-learn and pandas use numpy's generator.</td>
+</tr>
+<tr>
+<td>36</td>
+<td>Seeds PyTorch on CPU and GPU.</td>
+<td>Random seed</td>
+<td>PyTorch uses random numbers for starting weights, the order of batches, dropout and augmentation. This is the most important of the three.</td>
+</tr>
+<tr>
+<td>37</td>
+<td>Asks cuDNN to use the same convolution method every time.</td>
+<td><code>cudnn.deterministic</code></td>
+<td>Some fast methods give tiny different answers each run. This can be a little slower. We could skip it and accept small differences.</td>
+</tr>
+<tr>
+<td>38</td>
+<td>Stops cuDNN from timing methods and choosing the fastest.</td>
+<td><code>cudnn.benchmark</code></td>
+<td>The fastest method can change from run to run, which would break repeatability.</td>
+</tr>
+<tr>
+<td>39</td>
+<td>A note: two laptops can still give slightly different numbers.</td>
+<td>Reproducibility limit</td>
+<td>Different GPUs and driver versions round decimals differently. The report says so and reports mean and spread over several seeds.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>get_device</code> (lines 42 to 44)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>42 to 43</td>
+<td>Defines the function and its docstring.</td>
+<td>Function</td>
+<td>Every part calls <code>get_device()</code> instead of deciding by itself.</td>
+</tr>
+<tr>
+<td>44</td>
+<td>Asks PyTorch "can you use an NVIDIA GPU?". Returns <code>"cuda"</code> if yes, otherwise <code>"cpu"</code>.</td>
+<td>Device</td>
+<td>Later code calls <code>.to(device)</code>, so the same code runs on a GPU laptop and on a CPU laptop.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Self-check (lines 47 to 61)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>47</td>
+<td>Runs the lines below only when the file is started directly.</td>
+<td><code>__main__</code> guard</td>
+<td>When another file imports <code>set_seed</code>, this block does not run.</td>
+</tr>
+<tr>
+<td>49 to 54</td>
+<td>Makes three random tensors: seed 0, seed 0 again, seed 1.</td>
+<td>Test of a seed</td>
+<td>The first two must match and the third must differ.</td>
+</tr>
+<tr>
+<td>55 and 56</td>
+<td><code>assert</code> stops the program with a message if a statement is false.</td>
+<td>Assertion</td>
+<td>If someone breaks <code>set_seed</code>, running the file shows it at once. A full test framework would be more than we need.</td>
+</tr>
+<tr>
+<td>57 and 58</td>
+<td>Checks that the four folders exist.</td>
+<td>Assertion</td>
+<td>Catches a wrong path early.</td>
+</tr>
+<tr>
+<td>59 to 61</td>
+<td>Prints the result, the device and the repository folder.</td>
+<td>Output</td>
+<td>Any teammate can see at a glance that it worked.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3>4.2 <code>src/train.py</code> (the shared <code>train()</code>)</h3>
+<p>Why this file exists: the brief asks for one reusable training function, so every experiment (our own CNN, the transfer models, the data-efficiency study) is trained and recorded in the same way. The function is based on Tejash's notebook helper, because his settings already matched the team settings. Nitin added the <code>fraction</code> option and made it faster by keeping all images in memory.</p>
+<p><strong>4.2.1 Module docstring, imports and constants (lines 1 to 35)</strong></p>
+<pre><code class="language-python">import tempfile
+import time
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+from PIL import Image
+from sklearn.metrics import f1_score
+
+from src import models
+from src.dataset import IMAGENET_MEAN, IMAGENET_STD, get_loader
+from src.utils import DATA_DIR, METRICS_CSV, MODELS_DIR, SPLITS_CSV, get_device, set_seed
+
+BATCH_SIZE = 64
+MAX_EPOCHS = 20
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 to 17</td>
+<td>The docstring: one shared function, team settings, the speed trick and the self-check command.</td>
+<td>Docstring</td>
+<td>The file explains itself to a teammate.</td>
+</tr>
+<tr>
+<td>20 to 22</td>
+<td><code>tempfile</code> makes a throw-away folder (used only by the self-check). <code>time</code> is a stopwatch. <code>Path</code> handles file paths.</td>
+<td>Standard library</td>
+<td>The self-check must never touch the real results file.</td>
+</tr>
+<tr>
+<td>24 to 28</td>
+<td>numpy, pandas (tables), PyTorch, <code>Image</code> (opens picture files), <code>f1_score</code> (macro-F1).</td>
+<td>Libraries</td>
+<td><code>f1_score</code> comes from scikit-learn, so we do not write our own.</td>
+</tr>
+<tr>
+<td>30</td>
+<td><code>from src import models</code> loads Tejash's and Rachana's model file.</td>
+<td>Import</td>
+<td><code>train()</code> builds models by name and does not copy their code.</td>
+</tr>
+<tr>
+<td>31</td>
+<td>Takes the ImageNet mean and std and <code>get_loader</code> from Srivalli's <code>dataset.py</code>.</td>
+<td>Reuse</td>
+<td>The same normalisation numbers for all models. <code>get_loader</code> picks exactly the same images as her code.</td>
+</tr>
+<tr>
+<td>32</td>
+<td>Takes the folders, the split file, <code>get_device</code> and <code>set_seed</code> from <code>utils.py</code>.</td>
+<td>Reuse</td>
+<td>One place for paths and seeds.</td>
+</tr>
+<tr>
+<td>34</td>
+<td><code>BATCH_SIZE = 64</code>.</td>
+<td>Hyperparameter</td>
+<td>The team setting in <code>docs/plan.md</code>. A batch is the group of images used for one update.</td>
+</tr>
+<tr>
+<td>35</td>
+<td><code>MAX_EPOCHS = 20</code>.</td>
+<td>Hyperparameter</td>
+<td>The team setting. One epoch is one pass over the training images.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>4.2.2 Model names and <code>build_model</code> (lines 37 to 62)</strong></p>
+<pre><code class="language-python"># Model names. The scratch CNN names are the ones Tejash used in his runs.
+SCRATCH = {
+    &quot;scratch_cnn&quot;: {&quot;use_batchnorm&quot;: True, &quot;depth&quot;: 3},                # the baseline
+    &quot;scratch_cnn_no_batchnorm&quot;: {&quot;use_batchnorm&quot;: False, &quot;depth&quot;: 3},  # ablation 1
+    &quot;scratch_cnn_depth2&quot;: {&quot;use_batchnorm&quot;: True, &quot;depth&quot;: 2},         # ablation 2
+}
+# Transfer models (Rachana, part C): name -&gt; (backbone, freeze the backbone?)
+TRANSFER = {
+    &quot;resnet18_frozen&quot;: (&quot;resnet18&quot;, True),
+    &quot;resnet18_full&quot;: (&quot;resnet18&quot;, False),
+    &quot;mobilenet_v2_frozen&quot;: (&quot;mobilenet_v2&quot;, True),
+    &quot;mobilenet_v2_full&quot;: (&quot;mobilenet_v2&quot;, False),
+}
+
+
+def build_model(model_name):
+    &quot;&quot;&quot;Return (model, learning rate) for one of our model names.&quot;&quot;&quot;
+    if model_name in SCRATCH:
+        return models.build_scratch_cnn(**SCRATCH[model_name]), 1e-3
+    if model_name in TRANSFER:
+        if not hasattr(models, &quot;build_transfer_model&quot;):
+            raise NotImplementedError(&quot;build_transfer_model is not in src/models.py yet (Rachana, part C)&quot;)
+        backbone, freeze = TRANSFER[model_name]
+        # Team default: 0.001 when only the new last layer learns, 0.0001 when everything is fine-tuned.
+        return models.build_transfer_model(backbone, freeze), (1e-3 if freeze else 1e-4)
+    raise ValueError(f&quot;unknown model name {model_name!r}; use one of {sorted([*SCRATCH, *TRANSFER])}&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>37 to 42</td>
+<td><code>SCRATCH</code> links three names to the switches of <code>build_scratch_cnn</code>: BatchNorm on or off, and 3 or 2 blocks.</td>
+<td>Dictionary, default settings</td>
+<td>These are the names Tejash used, so his rows and ours match in <code>metrics.csv</code>.</td>
+</tr>
+<tr>
+<td>43 to 49</td>
+<td><code>TRANSFER</code> links four names to (backbone, frozen or not).</td>
+<td>Dictionary, frozen vs full</td>
+<td>Frozen means only the new last layer learns. Full means everything learns.</td>
+</tr>
+<tr>
+<td>52</td>
+<td><code>build_model(model_name)</code> returns the model and the learning rate.</td>
+<td>Function, return value</td>
+<td>The learning rate is chosen here so every caller gets the right pair.</td>
+</tr>
+<tr>
+<td>54 and 55</td>
+<td>For a scratch name: builds the scratch CNN with the switches from <code>SCRATCH</code>, learning rate 0.001.</td>
+<td>Learning rate</td>
+<td>0.001 is a usual starting rate for a network trained from random weights.</td>
+</tr>
+<tr>
+<td>56 to 58</td>
+<td>For a transfer name: checks that <code>build_transfer_model</code> exists. If not, stops with a clear message.</td>
+<td>Guard, clear error</td>
+<td>While Rachana's code was not yet in place this gave a readable message instead of a crash.</td>
+</tr>
+<tr>
+<td>59 to 61</td>
+<td>Looks up the backbone and the freeze switch, then returns the model and <code>1e-3</code> (frozen) or <code>1e-4</code> (full).</td>
+<td>Fine-tuning learning rate</td>
+<td>A lower rate for full fine-tuning avoids damaging the pretrained weights. We could use one rate for everything, but that is a worse choice for pretrained models.</td>
+</tr>
+<tr>
+<td>62</td>
+<td>For any other name: stops with an error that lists the valid names.</td>
+<td>Input check</td>
+<td>A typo fails at once with a helpful message.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>4.2.3 Fast data: all images kept in memory (lines 65 to 80)</strong></p>
+<pre><code class="language-python"># ---------- fast data: all images in memory ----------
+_cache = {}  # filled by the first train() call and reused by every later call in the same Python session
+
+
+def _load_all_images(device):
+    &quot;&quot;&quot;Read all 27,000 images once. Returns (images, labels, row_of_path) with everything on the device.&quot;&quot;&quot;
+    key = str(device)
+    if key not in _cache:
+        df = pd.read_csv(SPLITS_CSV)
+        print(f&quot;Reading {len(df)} images into memory (one time, about 20 seconds)...&quot;)
+        pictures = [np.array(Image.open(DATA_DIR / path).convert(&quot;RGB&quot;)) for path in df[&quot;path&quot;]]
+        images = torch.from_numpy(np.stack(pictures)).permute(0, 3, 1, 2).contiguous()  # (N, 3, 64, 64) bytes
+        labels = torch.tensor(df[&quot;label&quot;].values)
+        row_of_path = {path: row for row, path in enumerate(df[&quot;path&quot;])}
+        _cache[key] = (images.to(device), labels.to(device), row_of_path)
+    return _cache[key]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>66</td>
+<td><code>_cache</code> is a dictionary that remembers the loaded data.</td>
+<td>Cache</td>
+<td>The first <code>train()</code> call fills it. Later calls in the same session reuse it.</td>
+</tr>
+<tr>
+<td>71</td>
+<td>The key is the device name, for example <code>"cuda"</code>.</td>
+<td>Cache key</td>
+<td>Data is stored once per device.</td>
+</tr>
+<tr>
+<td>72 to 74</td>
+<td>If not cached: reads <code>splits.csv</code> and prints a message about the time.</td>
+<td>Lazy loading</td>
+<td>The first call is slow, the rest are fast.</td>
+</tr>
+<tr>
+<td>75</td>
+<td>Opens every picture, converts it to RGB and makes a numpy array of 64 x 64 x 3 bytes.</td>
+<td>Pixel values 0 to 255, <code>uint8</code></td>
+<td>Reading and decoding JPEGs in every epoch was slow (around 12 seconds per epoch just to read, from the log). Kept as bytes, all images take about 330 MB. A DataLoader with workers would be the other option, but it is fragile on Windows.</td>
+</tr>
+<tr>
+<td>76</td>
+<td>Stacks them into one block, moves the colour axis to the second place, and makes it contiguous. Shape is (27000, 3, 64, 64).</td>
+<td><code>permute</code>, <code>contiguous</code>, tensor</td>
+<td>PyTorch expects colour channels before height and width.</td>
+</tr>
+<tr>
+<td>77</td>
+<td>Puts the labels into a tensor.</td>
+<td>Tensor</td>
+<td>Labels are read by row, like the images.</td>
+</tr>
+<tr>
+<td>78</td>
+<td>Builds a lookup from file path to row number.</td>
+<td>Dictionary lookup</td>
+<td>The split files give paths, and this turns each path into a row number in the big block.</td>
+</tr>
+<tr>
+<td>79</td>
+<td>Moves images and labels to the device (GPU here) and stores them with the lookup.</td>
+<td><code>.to(device)</code></td>
+<td>Batches are then picked on the GPU without copying from disk.</td>
+</tr>
+<tr>
+<td>80</td>
+<td>Returns the cached tuple.</td>
+<td>Return value</td>
+<td>Every caller gets the same data.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>4.2.4 Choosing the rows of each split (lines 83 to 87)</strong></p>
+<pre><code class="language-python">def _rows(split, fraction, seed, row_of_path, device):
+    &quot;&quot;&quot;Row numbers of one split. For train, a stratified share of it, chosen by get_loader's own rule.&quot;&quot;&quot;
+    # get_loader only reads splits.csv here (no images), so we reuse its exact subset rule.
+    frame = get_loader(split, fraction=fraction if split == &quot;train&quot; else 1.0, seed=seed).dataset.df
+    return torch.tensor([row_of_path[path] for path in frame[&quot;path&quot;]], device=device)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>83</td>
+<td><code>_rows</code> returns the row numbers for one split.</td>
+<td>Function</td>
+<td>Used three times: train, validation and test.</td>
+</tr>
+<tr>
+<td>86</td>
+<td>Asks <code>get_loader</code> for the split. For <code>train</code> it passes <code>fraction</code>. For <code>val</code> and <code>test</code> it passes 1.0, so they never shrink. Takes the <code>.dataset.df</code> table.</td>
+<td>Stratified subset, reuse</td>
+<td>No images are read here, only the table. We reuse Srivalli's exact rule, so the 5% subset is the same images her code would pick.</td>
+</tr>
+<tr>
+<td>87</td>
+<td>Turns the paths into row numbers and moves them to the device.</td>
+<td>Lookup</td>
+<td>Row numbers index the big image block.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>4.2.5 Bytes to numbers, and the augmentation (lines 90 to 106)</strong></p>
+<pre><code class="language-python">def _prepare(batch_bytes, augment):
+    &quot;&quot;&quot;Bytes (0 to 255) to normalised floats. With augment: random 90-degree turns and flips, per image.&quot;&quot;&quot;
+    x = batch_bytes.float() / 255.0
+    if augment:
+        n = x.shape[0]
+        turns = torch.randint(0, 4, (n,), device=x.device)
+        for k in (1, 2, 3):
+            chosen = turns == k
+            if chosen.any():
+                x[chosen] = torch.rot90(x[chosen], k, dims=(2, 3))
+        flip_sideways = torch.rand(n, device=x.device) &lt; 0.5
+        flip_upside_down = torch.rand(n, device=x.device) &lt; 0.5
+        x[flip_sideways] = x[flip_sideways].flip(3)
+        x[flip_upside_down] = x[flip_upside_down].flip(2)
+    mean = torch.tensor(IMAGENET_MEAN, device=x.device).view(1, 3, 1, 1)
+    std = torch.tensor(IMAGENET_STD, device=x.device).view(1, 3, 1, 1)
+    return (x - mean) / std
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>90</td>
+<td>Defines <code>_prepare</code>. It takes a batch of bytes and a yes/no for augmentation.</td>
+<td>Function</td>
+<td>Training uses <code>augment=True</code>. Scoring uses <code>augment=False</code>.</td>
+</tr>
+<tr>
+<td>92</td>
+<td>Converts to decimals and divides by 255, so values are from 0 to 1.</td>
+<td>Scaling pixels</td>
+<td>The same first step as <code>ToTensor</code> in <code>dataset.py</code>.</td>
+</tr>
+<tr>
+<td>93</td>
+<td>Starts the augmentation block only when asked.</td>
+<td>Augmentation only in training</td>
+<td>Validation and test images must stay as they are.</td>
+</tr>
+<tr>
+<td>94 and 95</td>
+<td>Gives each image a random number 0, 1, 2 or 3, meaning 0, 90, 180 or 270 degrees.</td>
+<td>Random choice per image</td>
+<td>Uses PyTorch's random numbers, which the seed controls.</td>
+</tr>
+<tr>
+<td>96 to 99</td>
+<td>For turns 1, 2 and 3, rotates the chosen images in their height-width plane. Skips a turn if nobody picked it.</td>
+<td><code>torch.rot90</code></td>
+<td>Doing the work on the whole batch with masks is fast on the GPU. The rotation is exact, so no pixels are blurred.</td>
+</tr>
+<tr>
+<td>100 and 101</td>
+<td>Makes two random yes/no masks, one for a sideways flip and one for an upside-down flip, at 50% each.</td>
+<td>Masks, random flips</td>
+<td>Each image gets its own random choice.</td>
+</tr>
+<tr>
+<td>102 and 103</td>
+<td>Flips the chosen images. <code>flip(3)</code> flips left-right (width), <code>flip(2)</code> flips top-bottom (height).</td>
+<td>Flip</td>
+<td>A satellite has no "up", so a flipped field is still a field. These are the same changes as <code>augment()</code> in <code>dataset.py</code>.</td>
+</tr>
+<tr>
+<td>104 and 105</td>
+<td>Makes the ImageNet mean and std as tensors with shape (1, 3, 1, 1).</td>
+<td>Broadcasting</td>
+<td>Each colour channel gets its own mean and std.</td>
+</tr>
+<tr>
+<td>106</td>
+<td>Subtracts the mean and divides by the std.</td>
+<td>Normalisation</td>
+<td>The team uses the same numbers for all models, so the comparison is fair.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why the flip is written with masks:</strong> the code flips only the chosen images with <code>x[mask] = x[mask].flip(3)</code>. This is correct and simple. A possible alternative is to flip each image in a loop, which is slower.</p>
+<p><strong>4.2.6 Scoring without training (lines 109 to 122)</strong></p>
+<pre><code class="language-python">def _score(model, rows, images, labels, loss_function):
+    &quot;&quot;&quot;Average loss, accuracy and predictions for some rows, without augmentation.&quot;&quot;&quot;
+    model.eval()
+    total_loss = 0.0
+    predictions = []
+    with torch.no_grad():
+        for start in range(0, len(rows), 256):
+            batch = rows[start:start + 256]
+            scores = model(_prepare(images[batch], augment=False))
+            total_loss += loss_function(scores, labels[batch]).item() * len(batch)
+            predictions.append(scores.argmax(dim=1))
+    predictions = torch.cat(predictions)
+    accuracy = (predictions == labels[rows]).float().mean().item()
+    return total_loss / len(rows), accuracy, predictions
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>109</td>
+<td>Defines <code>_score</code>. It is used for validation and for the test set.</td>
+<td>Function</td>
+<td>One scoring code for both splits.</td>
+</tr>
+<tr>
+<td>111</td>
+<td>Puts the model in evaluation mode.</td>
+<td><code>model.eval()</code></td>
+<td>BatchNorm uses its saved averages instead of the batch's, and dropout is off. Without this, scores would change from call to call.</td>
+</tr>
+<tr>
+<td>112 and 113</td>
+<td>Starts a running loss total and an empty list of predictions.</td>
+<td>Accumulators</td>
+<td></td>
+</tr>
+<tr>
+<td>114</td>
+<td>Turns off gradient tracking for the block.</td>
+<td><code>torch.no_grad()</code></td>
+<td>Nothing is learned here, so gradients are not needed. This saves memory and time.</td>
+</tr>
+<tr>
+<td>115 and 116</td>
+<td>Goes through the rows in groups of 256.</td>
+<td>Batches for scoring</td>
+<td>256 is bigger than 64 because nothing is stored for learning. The answer is the same.</td>
+</tr>
+<tr>
+<td>117</td>
+<td>Runs the model on the normalised, non-augmented images.</td>
+<td>Forward pass</td>
+<td></td>
+</tr>
+<tr>
+<td>118</td>
+<td>Adds the loss times the group size to the total.</td>
+<td>Weighted sum</td>
+<td><code>loss_function</code> gives the mean over the group, so multiplying by the size makes a total.</td>
+</tr>
+<tr>
+<td>119</td>
+<td>Keeps the predicted class for each image (the highest score).</td>
+<td><code>argmax</code></td>
+<td>The predicted class is the position of the largest score.</td>
+</tr>
+<tr>
+<td>121</td>
+<td>Accuracy is the share of predictions that equal the true labels.</td>
+<td>Accuracy</td>
+<td>It is a fraction from 0 to 1 here.</td>
+</tr>
+<tr>
+<td>122</td>
+<td>Returns the average loss, the accuracy and the predictions.</td>
+<td>Return value</td>
+<td>The predictions are reused for macro-F1 on the test set.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>4.2.7 Writing the results row (lines 125 to 136)</strong></p>
+<pre><code class="language-python">def _save_row(path, row):
+    &quot;&quot;&quot;Add one row to the results file. A rerun of the same (model, fraction, seed) replaces its old row.&quot;&quot;&quot;
+    columns = [&quot;model&quot;, &quot;fraction&quot;, &quot;seed&quot;, &quot;accuracy&quot;, &quot;macro_f1&quot;]
+    path = Path(path)
+    old = pd.read_csv(path) if path.exists() and path.stat().st_size &gt; 0 else pd.DataFrame(columns=columns)
+    if old.empty:
+        new = pd.DataFrame([row], columns=columns)
+    else:
+        same_run = ((old[&quot;model&quot;] == row[&quot;model&quot;]) &amp; np.isclose(old[&quot;fraction&quot;].astype(float), row[&quot;fraction&quot;])
+                    &amp; (old[&quot;seed&quot;] == row[&quot;seed&quot;]))
+        new = pd.concat([old.loc[~same_run], pd.DataFrame([row], columns=columns)], ignore_index=True)
+    new.to_csv(path, index=False, lineterminator=&quot;\n&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>127</td>
+<td>Lists the five columns the brief asks for.</td>
+<td>Schema</td>
+<td>The file keeps exactly these columns.</td>
+</tr>
+<tr>
+<td>128</td>
+<td>Turns the path into a <code>Path</code> object.</td>
+<td><code>pathlib</code></td>
+<td></td>
+</tr>
+<tr>
+<td>129</td>
+<td>Reads the old file if it exists and is not empty. Otherwise starts an empty table.</td>
+<td>Read or create</td>
+<td>The first run creates the file.</td>
+</tr>
+<tr>
+<td>130 and 131</td>
+<td>If the old table is empty, the new table is just the new row.</td>
+<td>Edge case</td>
+<td></td>
+</tr>
+<tr>
+<td>132 to 134</td>
+<td>Finds the old rows that match the same model, fraction and seed. <code>np.isclose</code> compares fractions safely (0.05 is not stored exactly in binary).</td>
+<td>Idempotent write, floating-point comparison</td>
+<td>A rerun of the same run must not create a duplicate.</td>
+</tr>
+<tr>
+<td>135</td>
+<td>Keeps all rows that do not match, and adds the new row.</td>
+<td>Replace instead of duplicate</td>
+<td>The file keeps one row per run. Other rows are never changed.</td>
+</tr>
+<tr>
+<td>136</td>
+<td>Writes the file with <code>\n</code> line endings.</td>
+<td><code>to_csv</code></td>
+<td>The same line endings on every laptop, so git sees no fake changes.</td>
+</tr>
+</tbody>
+</table>
+<p>Note: <code>accuracy</code> and <code>macro_f1</code> are stored as decimals from 0 to 1 (for example 0.9827). Percentages are made later, in the notebook and in the server.</p>
+<p><strong>4.2.8 The <code>train()</code> function (lines 139 to 227)</strong></p>
+<pre><code class="language-python">def train(model_name, fraction, seed, epochs=MAX_EPOCHS, metrics_csv=METRICS_CSV, save_weights=None):
+    &quot;&quot;&quot;Train one model with the team settings and add ONE row to results/metrics.csv.
+
+    model_name:   one of SCRATCH or TRANSFER above
+    fraction:     share of the TRAIN split to use, from 0.05 to 1.0 (stratified). Validation and test never shrink.
+    seed:         makes the run repeatable (starting weights, which images, their order, augmentation)
+    save_weights: keep the best-epoch weights in models/ (not in git). Default: only when fraction is 1.0.
+
+    The best epoch is chosen on the VALIDATION set. The test set is scored ONCE, after training.
+    Returns a dict with the result and the training history.
+    &quot;&quot;&quot;
+    if not 0 &lt; fraction &lt;= 1:
+        raise ValueError(&quot;fraction must be above 0 and at most 1&quot;)
+    device = get_device()
+    set_seed(seed)
+
+    images, labels, row_of_path = _load_all_images(device)
+    train_rows = _rows(&quot;train&quot;, fraction, seed, row_of_path, device)
+    val_rows = _rows(&quot;val&quot;, 1.0, seed, row_of_path, device)
+    test_rows = _rows(&quot;test&quot;, 1.0, seed, row_of_path, device)
+
+    model, learning_rate = build_model(model_name)
+    model = model.to(device)
+    loss_function = torch.nn.CrossEntropyLoss()
+    # Only the layers that are allowed to learn go to the optimiser (matters for the frozen models).
+    # foreach=False is the same setting Tejash used in his runs.
+    optimizer = torch.optim.Adam([p for p in model.parameters() if p.requires_grad],
+                                 lr=learning_rate, foreach=False)
+    shuffler = torch.Generator().manual_seed(seed)  # decides the order of the images, so a run repeats
+
+    history = {&quot;train_loss&quot;: [], &quot;train_accuracy&quot;: [], &quot;val_loss&quot;: [], &quot;val_accuracy&quot;: []}
+    best_accuracy, best_epoch, best_weights = -1.0, 0, None
+    started = time.perf_counter()
+
+    for epoch in range(1, epochs + 1):
+        epoch_started = time.perf_counter()
+        model.train()
+        total_loss = torch.zeros((), device=device)
+        correct = torch.zeros((), device=device)
+        seen = 0
+
+        order = train_rows[torch.randperm(len(train_rows), generator=shuffler).to(device)]
+        for start in range(0, len(order), BATCH_SIZE):
+            batch = order[start:start + BATCH_SIZE]
+            if len(batch) &lt; 2:  # BatchNorm cannot work with a single image
+                continue
+            x = _prepare(images[batch], augment=True)
+            y = labels[batch]
+            optimizer.zero_grad()
+            scores = model(x)
+            loss = loss_function(scores, y)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.detach() * len(batch)
+            correct += (scores.argmax(dim=1) == y).sum()
+            seen += len(batch)
+
+        val_loss, val_accuracy, _ = _score(model, val_rows, images, labels, loss_function)
+        history[&quot;train_loss&quot;].append(total_loss.item() / seen)
+        history[&quot;train_accuracy&quot;].append(correct.item() / seen)
+        history[&quot;val_loss&quot;].append(val_loss)
+        history[&quot;val_accuracy&quot;].append(val_accuracy)
+        print(f&quot;{model_name} | fraction {fraction:g} | seed {seed} | epoch {epoch:02d}/{epochs} | &quot;
+              f&quot;train loss {history['train_loss'][-1]:.4f}, acc {history['train_accuracy'][-1]:.3f} | &quot;
+              f&quot;val loss {val_loss:.4f}, acc {val_accuracy:.3f} | {time.perf_counter() - epoch_started:.1f} s&quot;)
+
+        if val_accuracy &gt; best_accuracy:  # keep the best epoch, chosen on validation
+            best_accuracy, best_epoch = val_accuracy, epoch
+            best_weights = {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
+
+    model.load_state_dict(best_weights)
+
+    # The test set is used here, once, and nothing is decided from it.
+    _, accuracy, predictions = _score(model, test_rows, images, labels, loss_function)
+    macro_f1 = f1_score(labels[test_rows].cpu().numpy(), predictions.cpu().numpy(), average=&quot;macro&quot;)
+    row = {&quot;model&quot;: model_name, &quot;fraction&quot;: fraction, &quot;seed&quot;: seed, &quot;accuracy&quot;: accuracy, &quot;macro_f1&quot;: macro_f1}
+    _save_row(metrics_csv, row)
+
+    if save_weights is None:
+        save_weights = fraction == 1.0
+    if save_weights:
+        MODELS_DIR.mkdir(exist_ok=True)
+        torch.save(model.state_dict(), MODELS_DIR / f&quot;{model_name}_frac{fraction:g}_seed{seed}.pth&quot;)
+
+    seconds = time.perf_counter() - started
+    print(f&quot;TEST (best epoch {best_epoch}): accuracy {accuracy:.4f}, macro-F1 {macro_f1:.4f} &quot;
+          f&quot;| {seconds / 60:.1f} min, {seconds / epochs:.1f} s per epoch&quot;)
+    return {**row, &quot;best_epoch&quot;: best_epoch, &quot;val_accuracy&quot;: best_accuracy,
+            &quot;seconds_per_epoch&quot;: seconds / epochs, &quot;history&quot;: history}
+</code></pre>
+<p><strong>Part 4.2.8a: the function header, checks and setup (lines 139 to 171)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>139</td>
+<td>Defines <code>train</code>. Only three things are required: model name, fraction and seed.</td>
+<td>Function with defaults</td>
+<td><code>epochs</code>, <code>metrics_csv</code> and <code>save_weights</code> have defaults, so a normal call is short. The default <code>metrics_csv</code> is the real results file.</td>
+</tr>
+<tr>
+<td>150 and 151</td>
+<td>Stops with an error if <code>fraction</code> is not above 0 and at most 1.</td>
+<td>Input check</td>
+<td>A wrong value fails at once, not after an hour of training.</td>
+</tr>
+<tr>
+<td>152</td>
+<td>Picks the device.</td>
+<td>Device</td>
+<td>GPU if available.</td>
+</tr>
+<tr>
+<td>153</td>
+<td>Sets the seed.</td>
+<td>Seed</td>
+<td>The seed is set before anything random happens, so the whole run repeats.</td>
+</tr>
+<tr>
+<td>155</td>
+<td>Loads all images into memory (first call only).</td>
+<td>Cache</td>
+<td></td>
+</tr>
+<tr>
+<td>156 to 158</td>
+<td>Gets the row numbers of train (reduced by <code>fraction</code>), validation and test (full).</td>
+<td>Fixed split</td>
+<td>Validation and test never shrink. Only the training rows follow <code>fraction</code>.</td>
+</tr>
+<tr>
+<td>160</td>
+<td>Builds the model by name and gets its learning rate.</td>
+<td><code>build_model</code></td>
+<td></td>
+</tr>
+<tr>
+<td>161</td>
+<td>Moves the model to the device.</td>
+<td><code>model.to(device)</code></td>
+<td>Same code on GPU and CPU.</td>
+</tr>
+<tr>
+<td>162</td>
+<td>Creates the loss function.</td>
+<td>Cross-entropy</td>
+<td>The standard loss for choosing one class out of several. Same as Tejash's.</td>
+</tr>
+<tr>
+<td>165 and 166</td>
+<td>Creates Adam. Only parameters with <code>requires_grad</code> True are given to it. Sets the learning rate. <code>foreach=False</code> is the same switch Tejash used.</td>
+<td>Optimiser, <code>requires_grad</code></td>
+<td>Frozen layers must not change. Only the new last layer is updated in frozen models.</td>
+</tr>
+<tr>
+<td>167</td>
+<td>Makes a random generator from the seed.</td>
+<td><code>torch.Generator</code></td>
+<td>It decides the shuffle order, so the order repeats. It is separate from the global generator.</td>
+</tr>
+<tr>
+<td>169</td>
+<td>Creates empty lists for the history.</td>
+<td>Bookkeeping</td>
+<td>The history is returned, and notebooks can plot it. It is not written to disk by <code>train()</code>.</td>
+</tr>
+<tr>
+<td>170</td>
+<td>Sets the best accuracy to -1, the best epoch to 0 and no weights yet.</td>
+<td>Best-epoch tracking</td>
+<td>Any real accuracy is higher than -1, so the first epoch always becomes the first best.</td>
+</tr>
+<tr>
+<td>171</td>
+<td>Starts the stopwatch.</td>
+<td>Timing</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Part 4.2.8b: the epoch loop, the training steps (lines 173 to 194)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>173</td>
+<td>Starts the loop over epochs, 1 to 20.</td>
+<td>Epoch</td>
+<td>One epoch is one full pass over the training rows.</td>
+</tr>
+<tr>
+<td>174</td>
+<td>Starts a timer for this epoch.</td>
+<td>Timing</td>
+<td>Used for the printed seconds.</td>
+</tr>
+<tr>
+<td>175</td>
+<td>Switches to training mode.</td>
+<td><code>model.train()</code></td>
+<td>BatchNorm uses batch statistics and dropout is active. Note: in frozen models BatchNorm still updates its averages.</td>
+</tr>
+<tr>
+<td>176 and 177</td>
+<td>Makes counters for the loss and the number of correct answers. They live on the GPU.</td>
+<td>Counters</td>
+<td>Reading them after every batch would slow training, so they are read once per epoch.</td>
+</tr>
+<tr>
+<td>178</td>
+<td>Counts images seen in this epoch.</td>
+<td>Counter</td>
+<td>Used to divide the totals.</td>
+</tr>
+<tr>
+<td>180</td>
+<td>Shuffles the training rows with the seeded generator and moves them to the device.</td>
+<td>Shuffle</td>
+<td>A different order each epoch helps learning. The seed makes the order repeatable.</td>
+</tr>
+<tr>
+<td>181</td>
+<td>Goes through the shuffled rows in groups of 64.</td>
+<td>Batch</td>
+<td></td>
+</tr>
+<tr>
+<td>182</td>
+<td>Takes one group.</td>
+<td>Batch slice</td>
+<td></td>
+</tr>
+<tr>
+<td>183 and 184</td>
+<td>Skips a group of only one image.</td>
+<td>BatchNorm limit</td>
+<td>BatchNorm cannot work with one image. With 18,900 images and batches of 64 the last batch has 18,900 mod 64 = 20 images (for 100%), so this line rarely matters, but it prevents a crash.</td>
+</tr>
+<tr>
+<td>185</td>
+<td>Prepares the images with augmentation.</td>
+<td>Augmentation only in training</td>
+<td></td>
+</tr>
+<tr>
+<td>186</td>
+<td>Gets the true labels of the batch.</td>
+<td>Labels</td>
+<td></td>
+</tr>
+<tr>
+<td>187</td>
+<td>Clears the old gradients.</td>
+<td><code>zero_grad</code></td>
+<td>Otherwise gradients add up across batches.</td>
+</tr>
+<tr>
+<td>188</td>
+<td>Runs the forward pass to get the scores.</td>
+<td>Forward pass</td>
+<td></td>
+</tr>
+<tr>
+<td>189</td>
+<td>Computes the loss between the scores and the true labels.</td>
+<td>Cross-entropy</td>
+<td></td>
+</tr>
+<tr>
+<td>190</td>
+<td>Works out the gradient of the loss for every weight.</td>
+<td><code>backward</code></td>
+<td>This is the learning step: it finds which way each weight should move.</td>
+</tr>
+<tr>
+<td>191</td>
+<td>Moves every weight one step with Adam.</td>
+<td><code>step</code></td>
+<td>Core of training.</td>
+</tr>
+<tr>
+<td>192</td>
+<td>Adds the loss times the group size to the epoch total (no gradient kept).</td>
+<td><code>detach</code></td>
+<td><code>detach</code> removes the link to the gradient graph, so memory is not kept.</td>
+</tr>
+<tr>
+<td>193</td>
+<td>Counts the correct answers in the group.</td>
+<td>Accuracy count</td>
+<td></td>
+</tr>
+<tr>
+<td>194</td>
+<td>Adds the group size to <code>seen</code>.</td>
+<td>Counter</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Part 4.2.8c: scoring, the history and the best epoch (lines 196 to 207)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>196</td>
+<td>Scores the whole validation set without augmentation.</td>
+<td>Validation</td>
+<td>This is the practice exam.</td>
+</tr>
+<tr>
+<td>199 to 200</td>
+<td>Stores the average loss and accuracy for training and validation.</td>
+<td>History</td>
+<td>Curves for the report (learning curves) and for over-fitting checks.</td>
+</tr>
+<tr>
+<td>201 to 203</td>
+<td>Prints one line for the epoch, with losses, accuracies and seconds.</td>
+<td>Progress</td>
+<td>Makes it easy to watch a laptop run.</td>
+</tr>
+<tr>
+<td>205</td>
+<td>If this epoch's validation accuracy is higher than the best so far...</td>
+<td>Best-epoch selection on validation</td>
+<td>The choice uses validation only, never the test set.</td>
+</tr>
+<tr>
+<td>206</td>
+<td>...remembers the epoch number and the accuracy.</td>
+<td>Best epoch</td>
+<td>The best epoch is printed at the end and returned. It is not saved in the CSV.</td>
+</tr>
+<tr>
+<td>207</td>
+<td>Keeps a copy of all weights and BatchNorm averages on the CPU.</td>
+<td><code>state_dict</code>, <code>clone</code></td>
+<td>The copy is taken before the next epoch changes the model. Copying to the CPU frees GPU memory.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Part 4.2.8d: the test set, the results row and the saved weights (lines 209 to 221)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>209</td>
+<td>Puts the best epoch's weights back into the model.</td>
+<td><code>load_state_dict</code></td>
+<td>We report the best version, not the last one.</td>
+</tr>
+<tr>
+<td>211</td>
+<td>Comment: the test set is used here, once.</td>
+<td>Test set</td>
+<td>Nothing is decided from the test score.</td>
+</tr>
+<tr>
+<td>212</td>
+<td>Scores the test set with the best weights.</td>
+<td>Test set</td>
+<td>Returns accuracy and predictions.</td>
+</tr>
+<tr>
+<td>213</td>
+<td>Computes macro-F1 on the test set with <code>average="macro"</code>.</td>
+<td>Macro-F1</td>
+<td>Every class counts equally, so a weak small class is not hidden.</td>
+</tr>
+<tr>
+<td>214</td>
+<td>Makes the row: model, fraction, seed, accuracy, macro-F1.</td>
+<td>Result row</td>
+<td></td>
+</tr>
+<tr>
+<td>215</td>
+<td>Writes the row to the results file, replacing an old row of the same run.</td>
+<td><code>_save_row</code></td>
+<td>One row per run.</td>
+</tr>
+<tr>
+<td>217 and 218</td>
+<td>If <code>save_weights</code> was not given, it is True only when <code>fraction</code> is exactly 1.0.</td>
+<td>Default argument</td>
+<td>Rohan's evaluation needs the full-data models. Smaller runs do not save weights, to save disk space.</td>
+</tr>
+<tr>
+<td>219 to 221</td>
+<td>Makes the <code>models/</code> folder if needed, then saves the state dictionary as <code>&lt;model&gt;_frac&lt;fraction&gt;_seed&lt;seed&gt;.pth</code>.</td>
+<td>Checkpoint</td>
+<td>For fraction 1.0 this gives names such as <code>mobilenet_v2_full_frac1_seed0.pth</code>. The folder is ignored by git.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Part 4.2.8e: the end of the function (lines 223 to 227)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>223</td>
+<td>Stops the stopwatch.</td>
+<td>Timing</td>
+<td></td>
+</tr>
+<tr>
+<td>224 and 225</td>
+<td>Prints the test line with the best epoch, the accuracy, macro-F1, the minutes and the seconds per epoch.</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>226 and 227</td>
+<td>Returns the row, the best epoch, the best validation accuracy, the time per epoch and the history.</td>
+<td>Return value</td>
+<td>Notebook 05 reads <code>accuracy</code> and <code>best_epoch</code> from this dictionary.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>4.2.9 Self-check (lines 230 to 239)</strong></p>
+<pre><code class="language-python">if __name__ == &quot;__main__&quot;:
+    # Tiny check: 2 epochs on 5% of the data, written to a temporary file (the real metrics.csv is NOT touched).
+    with tempfile.TemporaryDirectory() as folder:
+        results_file = Path(folder) / &quot;metrics.csv&quot;
+        train(&quot;scratch_cnn&quot;, fraction=0.05, seed=0, epochs=2, metrics_csv=results_file, save_weights=False)
+        table = pd.read_csv(results_file)
+        assert len(table) == 1 and 0 &lt; table[&quot;accuracy&quot;][0] &lt;= 1, &quot;one row with a sensible accuracy&quot;
+        train(&quot;scratch_cnn&quot;, fraction=0.05, seed=0, epochs=1, metrics_csv=results_file, save_weights=False)
+        assert len(pd.read_csv(results_file)) == 1, &quot;a rerun must replace its row, not add a duplicate&quot;
+    print(&quot;train: OK (one row written, a rerun replaced it)&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>232</td>
+<td>Makes a temporary folder that is deleted at the end.</td>
+<td><code>tempfile</code></td>
+<td>The real <code>metrics.csv</code> is never touched.</td>
+</tr>
+<tr>
+<td>233 and 234</td>
+<td>Trains the scratch CNN for 2 epochs on 5% with seed 0, into the temporary file, with no weight file.</td>
+<td><code>__main__</code> guard, test run</td>
+<td>Run it with <code>python -m src.train</code>.</td>
+</tr>
+<tr>
+<td>235 and 236</td>
+<td>Reads the temporary file and checks it has one row with a sensible accuracy.</td>
+<td>Assertion</td>
+<td></td>
+</tr>
+<tr>
+<td>237 and 238</td>
+<td>Runs again with the same run settings and checks there is still one row.</td>
+<td>Idempotent write test</td>
+<td>This tests the replace rule in <code>_save_row</code>.</td>
+</tr>
+<tr>
+<td>239</td>
+<td>Prints OK.</td>
+<td>Output</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>How it was tested (from the log, not re-run here):</strong> the self-check passed. A longer test, kept outside the repository, showed that the in-memory pixels equal the original loader's pixels, that every augmented image is one of the 8 turns or flips of the original, that the 5% subset is the same as Srivalli's <code>get_loader</code> picks, and that the train, validation and test rows do not overlap. Full 20-epoch runs gave a baseline mean of 92.79% over seeds 0 to 2 (Tejash's notebook: 92.72%). Speed was about 4.6 seconds per epoch on the RTX 3050.</p>
+<p><strong>Points to be careful about (honest notes):</strong></p>
+<ul>
+<li>The docstring says the fraction is "from 0.05 to 1.0". The code accepts any value above 0 and up to 1. The smallest value used in the study is 0.05.</li>
+<li>BatchNorm statistics still update during training in the frozen transfer models, because <code>model.train()</code> is called on the whole model. The log lists this as a report caveat.</li>
+<li>The fraction is passed to <code>get_loader</code>, which uses scikit-learn's <code>train_test_split</code>. Each run builds its subset from the same seed, so the 5% subset of seed 0 is the same every time.</li>
+</ul>
+<hr />
+<h3>4.3 <code>src/models.py</code> (only the parts <code>train()</code> calls)</h3>
+<p>Tejash owns the scratch CNN and Rachana owns the transfer models. <code>train()</code> only uses two of their functions: it builds a model by name and, for transfer models, it freezes or unfreezes the backbone. Below are the parts it calls.</p>
+<p>Signature of the scratch builder, called as <code>models.build_scratch_cnn(**SCRATCH[model_name])</code>:</p>
+<pre><code class="language-python">def build_scratch_cnn(
+    num_classes=10,
+    use_batchnorm=True,
+    depth=3,
+    dropout=0.0,
+):
+    ...
+    filter_counts = [32, 64, 128][:depth]
+    layers = []
+    input_channels = 3
+
+    for output_channels in filter_counts:
+        # Each block finds image features, then halves the image width and height.
+        layers.append(nn.Conv2d(input_channels, output_channels, kernel_size=3, padding=1))
+        if use_batchnorm:
+            layers.append(nn.BatchNorm2d(output_channels))
+        layers.append(nn.ReLU())
+        layers.append(nn.MaxPool2d(kernel_size=2))
+        input_channels = output_channels
+
+    # Keep one value per feature map, whatever the final image size is.
+    layers.append(nn.AdaptiveAvgPool2d(1))
+    layers.append(nn.Flatten())
+    if dropout &gt; 0:
+        layers.append(nn.Dropout(p=dropout))
+    layers.append(nn.Linear(input_channels, num_classes))
+
+    return nn.Sequential(*layers)
+</code></pre>
+<p>The transfer builder, called as <code>models.build_transfer_model(backbone, freeze)</code>. This is the freeze logic:</p>
+<pre><code class="language-python">def build_transfer_model(name: str, freeze: bool = True):
+    &quot;&quot;&quot;Build a pretrained ImageNet model adapted for 10 EuroSAT classes.
+    ...
+    &quot;&quot;&quot;
+    if name == &quot;resnet18&quot;:
+        model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+    elif name == &quot;mobilenet_v2&quot;:
+        model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
+    else:
+        raise ValueError(f&quot;Unsupported transfer model {name!r}; expected 'resnet18' or 'mobilenet_v2'&quot;)
+
+    if freeze:
+        # Freeze all pretrained weights first.
+        for param in model.parameters():
+            param.requires_grad = False
+
+    # Replace the 1000-class ImageNet head with a new 10-class linear layer.
+    # A new nn.Linear has requires_grad=True by default, so it always learns.
+    if name == &quot;resnet18&quot;:
+        model.fc = nn.Linear(model.fc.in_features, 10)
+    elif name == &quot;mobilenet_v2&quot;:
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, 10)
+
+    return model
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines (in <code>models.py</code>)</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why it matters for <code>train()</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>11 to 16 (signature)</td>
+<td>The scratch builder takes the number of classes, the BatchNorm switch, the depth (2 or 3 blocks) and dropout.</td>
+<td>Default arguments</td>
+<td><code>train()</code> passes only <code>use_batchnorm</code> and <code>depth</code> from its <code>SCRATCH</code> dictionary.</td>
+</tr>
+<tr>
+<td>33 to 40</td>
+<td>One loop per block: convolution, optional BatchNorm, ReLU, then MaxPool that halves the size.</td>
+<td>Convolution block</td>
+<td>Three blocks with 32, 64 and 128 filters is the baseline.</td>
+</tr>
+<tr>
+<td>43 to 47</td>
+<td>Average pooling, flatten, optional dropout, then a linear layer to 10 scores.</td>
+<td>Head</td>
+<td>The output is one score per class, which <code>CrossEntropyLoss</code> uses.</td>
+</tr>
+<tr>
+<td>59 to 64</td>
+<td>Loads the ImageNet-pretrained ResNet-18 or MobileNetV2 with torchvision.</td>
+<td>Pretrained weights</td>
+<td>The first run downloads them to the torch cache. Later runs use the cache.</td>
+</tr>
+<tr>
+<td>66 to 69</td>
+<td>If <code>freeze</code> is True, every parameter gets <code>requires_grad = False</code>.</td>
+<td>Frozen backbone</td>
+<td><code>train()</code> gives the optimiser only the parameters that still have <code>requires_grad</code> True.</td>
+</tr>
+<tr>
+<td>73 to 76</td>
+<td>Replaces the 1000-class ImageNet output with a new 10-class linear layer.</td>
+<td>Transfer head</td>
+<td>The new layer is created with <code>requires_grad=True</code>, so it always learns, even when the backbone is frozen.</td>
+</tr>
+</tbody>
+</table>
+<p>The learning-rate choice (1e-3 when frozen, 1e-4 when fully fine-tuned) is made in <code>build_model</code> in <code>train.py</code>, not here.</p>
+<hr />
+<h3>4.4 <code>notebooks/05_data_efficiency.ipynb</code> (all code cells)</h3>
+<p>Why this notebook exists: the brief asks for a data-efficiency study with several seeds at small data sizes. It compares our scratch CNN with the best transfer model on validation, MobileNetV2 fully fine-tuned. Every run goes through <code>train()</code>, so the numbers are comparable with Parts B and C. The text cells explain the question and the results. The code cells are below. The cell IDs are given because they are easier to find than cell numbers.</p>
+<p><strong>Setup cell (id 327b72df)</strong></p>
+<pre><code class="language-python">from pathlib import Path
+import contextlib
+import io
+import os
+import sys
+import time
+
+# Make imports work whether Jupyter starts in the repo folder or in notebooks/.
+project_root = Path.cwd()
+if not (project_root / 'src').is_dir():
+    project_root = project_root.parent
+os.chdir(project_root)
+sys.path.insert(0, str(project_root))
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+
+from src.train import MAX_EPOCHS, train
+from src.utils import FIGURES_DIR, METRICS_CSV, get_device
+
+print('Device:', get_device())
+if torch.cuda.is_available():
+    print('GPU:', torch.cuda.get_device_name(0))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2 to 14</td>
+<td>Finds the repository folder from either the repo folder or the <code>notebooks/</code> folder, changes to it and adds it to the import path.</td>
+<td>Working folder</td>
+<td>Imports and relative paths then work from both places.</td>
+</tr>
+<tr>
+<td>16 to 21</td>
+<td>Imports plotting, numbers, tables and PyTorch.</td>
+<td>Libraries</td>
+<td></td>
+</tr>
+<tr>
+<td>23 and 24</td>
+<td>Imports <code>train</code>, <code>MAX_EPOCHS</code>, the figure folder, the results file and <code>get_device</code>.</td>
+<td>Reuse</td>
+<td>The notebook calls the same function as the rest of the project.</td>
+</tr>
+<tr>
+<td>26 and 27</td>
+<td>Prints the device and the GPU name.</td>
+<td>Check</td>
+<td>Shows that the run is on the GPU (on the RTX 3050 here).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Settings cell (id 8fc2b7e8)</strong></p>
+<pre><code class="language-python">MODELS_TO_COMPARE = ['scratch_cnn', 'mobilenet_v2_full']   # our own CNN vs the best transfer model on validation
+FRACTIONS = [0.05, 0.10, 0.25, 0.50, 1.00]               # share of the training images
+SEEDS = [0, 1, 2]                                        # seeds 3 and 4 (the CPU laptops) can be added later
+TRAIN_SIZE = 18900                                       # 70% of 27,000 images
+SIZES = [round(fraction * TRAIN_SIZE) for fraction in FRACTIONS]
+
+print('Training sizes:', SIZES)
+print('Runs in total:', len(MODELS_TO_COMPARE) * len(FRACTIONS) * len(SEEDS), '| epochs per run: up to', MAX_EPOCHS)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Two models: our scratch CNN and MobileNetV2 fully fine-tuned.</td>
+<td>Comparison</td>
+<td>The best transfer model on validation (98.22% against 97.69% for ResNet-18 full).</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Five shares of the training images.</td>
+<td>Fraction</td>
+<td>5%, 10%, 25%, 50% and 100%.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Three seeds.</td>
+<td>Seeds</td>
+<td>Several seeds show whether a difference is larger than the random spread.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Hard-coded size of the training split.</td>
+<td>Constant</td>
+<td>Equal to 70% of 27,000. The notebook does not recompute it.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Turns each share into a number of images: 945, 1890, 4725, 9450, 18900.</td>
+<td>Derived constants</td>
+<td>Used for the x-axis and the table.</td>
+</tr>
+<tr>
+<td>7 and 8</td>
+<td>Prints the sizes, and the number of runs (2 x 5 x 3 = 30) and the epoch limit.</td>
+<td>Output</td>
+<td>30 runs in total, including the 6 finished 100% runs from Parts B and C.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Sweep cell (id ab16d926)</strong></p>
+<pre><code class="language-python">def already_done(model, fraction, seed):
+    '''True if metrics.csv already has a row for this (model, fraction, seed).'''
+    if not METRICS_CSV.exists():
+        return False
+    table = pd.read_csv(METRICS_CSV)
+    same = (table['model'] == model) &amp; np.isclose(table['fraction'], fraction) &amp; (table['seed'] == seed)
+    return bool(same.any())
+
+
+jobs = [(model, fraction, seed) for seed in SEEDS for model in MODELS_TO_COMPARE for fraction in FRACTIONS]
+sweep_started = time.time()
+for model, fraction, seed in jobs:
+    if already_done(model, fraction, seed):
+        print(f'skip  {model:18s} fraction {fraction:&lt;5g} seed {seed}: already in metrics.csv')
+        continue
+    started = time.time()
+    with contextlib.redirect_stdout(io.StringIO()):   # hide the per-epoch lines
+        result = train(model, fraction, seed)
+    print(f'done  {model:18s} fraction {fraction:&lt;5g} seed {seed}: test accuracy {result[&quot;accuracy&quot;]:.4f}, '
+          f'macro-F1 {result[&quot;macro_f1&quot;]:.4f}, best epoch {result[&quot;best_epoch&quot;]:2d}, '
+          f'{(time.time() - started) / 60:.1f} min')
+print(f'Sweep finished in {(time.time() - sweep_started) / 60:.1f} minutes.')
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 to 7</td>
+<td><code>already_done</code> says True if <code>metrics.csv</code> already has this (model, fraction, seed).</td>
+<td>Resumable check</td>
+<td>Makes the notebook safe to stop and restart.</td>
+</tr>
+<tr>
+<td>4 and 5</td>
+<td>If the file does not exist yet, nothing is done.</td>
+<td>Edge case</td>
+<td></td>
+</tr>
+<tr>
+<td>6 and 7</td>
+<td>Reads the table, builds a True/False mask for the three conditions, and returns True if any row matches.</td>
+<td>Boolean mask, <code>np.isclose</code></td>
+<td><code>np.isclose</code> is used so 0.05 matches 0.05 even with binary rounding.</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Builds the list of all 30 jobs. Seed is the outer loop, then model, then fraction.</td>
+<td>Ordering</td>
+<td>If the notebook stops early, every model has the same seeds done. Each seed is complete before the next.</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Starts the sweep timer.</td>
+<td>Timing</td>
+<td></td>
+</tr>
+<tr>
+<td>12 to 15</td>
+<td>For each job: if already done, print "skip" and move on.</td>
+<td>Resumable loop</td>
+<td>The 100% rows from Parts B and C are skipped.</td>
+</tr>
+<tr>
+<td>17</td>
+<td>Starts a timer for this run.</td>
+<td>Timing</td>
+<td></td>
+</tr>
+<tr>
+<td>18 and 19</td>
+<td>Calls <code>train()</code> and hides its per-epoch printing with <code>redirect_stdout</code>.</td>
+<td><code>contextlib.redirect_stdout</code></td>
+<td>Keeps the notebook output short: one line per run.</td>
+</tr>
+<tr>
+<td>20 to 23</td>
+<td>Prints one summary line with accuracy, macro-F1, best epoch and minutes.</td>
+<td>Output</td>
+<td>The best epoch is shown so a run that stopped at epoch 20 can be spotted.</td>
+</tr>
+<tr>
+<td>24</td>
+<td>Prints the total time.</td>
+<td>Output</td>
+<td>About 20 minutes on the RTX 3050, from the log.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Results table cell (id c9cec3c1)</strong></p>
+<pre><code class="language-python">table = pd.read_csv(METRICS_CSV)
+table = table[table['model'].isin(MODELS_TO_COMPARE)].copy()
+table['n_images'] = (table['fraction'] * TRAIN_SIZE).round().astype(int)
+
+summary = (table.groupby(['model', 'n_images'])
+           .agg(seeds=('seed', 'count'),
+                accuracy_mean=('accuracy', 'mean'), accuracy_sd=('accuracy', lambda s: s.std(ddof=1)),
+                f1_mean=('macro_f1', 'mean'), f1_sd=('macro_f1', lambda s: s.std(ddof=1)))
+           .reset_index())
+
+show = summary.copy()
+show['test accuracy (%)'] = [f'{100 * m:.2f} ± {100 * (0 if pd.isna(s) else s):.2f}'
+                             for m, s in zip(show['accuracy_mean'], show['accuracy_sd'])]
+show['test macro-F1 (%)'] = [f'{100 * m:.2f} ± {100 * (0 if pd.isna(s) else s):.2f}'
+                             for m, s in zip(show['f1_mean'], show['f1_sd'])]
+display(show[['model', 'n_images', 'seeds', 'test accuracy (%)', 'test macro-F1 (%)']])
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 and 2</td>
+<td>Reads the table and keeps only the two models.</td>
+<td>Filtering</td>
+<td></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Adds a column with the number of training images from the fraction.</td>
+<td>Derived column</td>
+<td>Fraction 0.05 becomes 945 images. The <code>round</code> avoids 944.99 type errors.</td>
+</tr>
+<tr>
+<td>5 to 9</td>
+<td>Groups by model and size, and computes per group: number of seeds, mean and sample SD (<code>ddof=1</code>) of accuracy and macro-F1.</td>
+<td>Group-by aggregation, mean ± SD</td>
+<td><code>ddof=1</code> divides by the number of seeds minus 1, which is right for a small sample. With one seed the SD is NaN.</td>
+</tr>
+<tr>
+<td>11 to 15</td>
+<td>Makes display copies and text strings of the form "mean ± SD" in percent. A NaN SD (one seed) is shown as 0.</td>
+<td>Formatting</td>
+<td>Displays 93.69 ± 0.20.</td>
+</tr>
+<tr>
+<td>16</td>
+<td>Shows the table.</td>
+<td>Output</td>
+<td>The numbers in the README come from this table.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Plot cell (id 2ee2e351)</strong></p>
+<pre><code class="language-python">labels = {'scratch_cnn': 'Scratch CNN (our own)', 'mobilenet_v2_full': 'MobileNetV2, fully fine-tuned'}
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
+panels = [('accuracy_mean', 'accuracy_sd', 'Test accuracy (%)'), ('f1_mean', 'f1_sd', 'Test macro-F1 (%)')]
+for ax, (mean_column, sd_column, title) in zip(axes, panels):
+    for model in MODELS_TO_COMPARE:
+        rows = summary[summary['model'] == model].sort_values('n_images')
+        ax.errorbar(rows['n_images'], 100 * rows[mean_column], yerr=100 * rows[sd_column].fillna(0),
+                    marker='o', capsize=4, linewidth=2, label=labels[model])
+    ax.set_xscale('log')
+    ax.set_xticks(SIZES)
+    ax.set_xticklabels([f'{n:,}\n({f:.0%})' for n, f in zip(SIZES, FRACTIONS)])
+    ax.minorticks_off()
+    ax.set_xlabel('Labelled training images (log scale)')
+    ax.set_ylabel(title)
+    ax.grid(alpha=0.3)
+    ax.legend(loc='lower right')
+fig.suptitle('Data efficiency on EuroSAT: test score vs. amount of labelled training data (mean ± sample SD over seeds)')
+fig.tight_layout()
+fig.savefig(FIGURES_DIR / 'data_efficiency.png', dpi=160)
+plt.show()
+print('Saved', FIGURES_DIR / 'data_efficiency.png')
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Friendly names for the legend.</td>
+<td>Labels</td>
+<td></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Makes two plot panels side by side: accuracy and macro-F1.</td>
+<td>Subplots</td>
+<td>One figure, two measures, same x-axis.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>The two panels are described as (mean column, SD column, title).</td>
+<td>Data-driven plot</td>
+<td>One loop draws both.</td>
+</tr>
+<tr>
+<td>6 to 9</td>
+<td>For each model draws its line with dots and error bars. Values are multiplied by 100 to show percent; NaN SD becomes 0.</td>
+<td>Error bars, mean ± SD</td>
+<td>The bar length is one sample SD.</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Uses a logarithmic x-axis.</td>
+<td>Log scale</td>
+<td>The sizes grow by 2 to 2.5 times each step, so a log axis spaces them evenly. A linear axis would crowd the small sizes.</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Sets the x tick positions to the five sizes.</td>
+<td>Ticks</td>
+<td></td>
+</tr>
+<tr>
+<td>12</td>
+<td>Labels each tick with the number of images and the percent.</td>
+<td>Tick labels</td>
+<td>For example "945 (5%)".</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Turns off the minor ticks.</td>
+<td>Plot style</td>
+<td>The log axis would otherwise add many small ticks.</td>
+</tr>
+<tr>
+<td>14 to 18</td>
+<td>Axis labels, a grid and the legend.</td>
+<td>Plot style</td>
+<td></td>
+</tr>
+<tr>
+<td>19 and 20</td>
+<td>Adds a title, fits the layout and saves the figure at 160 dpi.</td>
+<td>Figure output</td>
+<td>The file <code>results/figures/data_efficiency.png</code> is in git.</td>
+</tr>
+<tr>
+<td>21 and 22</td>
+<td>Shows the figure and prints the saved path.</td>
+<td>Output</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gap cell (id b9596086)</strong></p>
+<pre><code class="language-python">pivot = summary.pivot(index='n_images', columns='model', values='accuracy_mean') * 100
+gap = pd.DataFrame({'scratch CNN (%)': pivot['scratch_cnn'], 'MobileNetV2 full (%)': pivot['mobilenet_v2_full']})
+gap['gap (points)'] = gap['MobileNetV2 full (%)'] - gap['scratch CNN (%)']
+display(gap.round(2))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Turns the summary into a table: one row per size, one column per model, as percent.</td>
+<td>Pivot</td>
+<td></td>
+</tr>
+<tr>
+<td>2</td>
+<td>Puts the two models into a table with clear names.</td>
+<td>Table</td>
+<td></td>
+</tr>
+<tr>
+<td>3</td>
+<td>The gap is MobileNetV2 minus scratch, in percentage points.</td>
+<td>Gap</td>
+<td>Shows how much transfer learning helps at each size.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Shows the rounded table.</td>
+<td>Output</td>
+<td>The gap goes from 16.62 at 945 images to 5.56 at 18,900.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Text cells.</strong> The written interpretation (for example "transfer learning helps most when labels are scarce") and the list of study limits are text, not code. The limits are: the same epoch budget for all sizes, MobileNetV2 chosen on the full data and not tuned per size, only 3 seeds so far, and a random split that can place neighbouring patches in both train and test.</p>
+<hr />
+<h3>4.5 <code>check_setup.py</code> (every function)</h3>
+<p>Why this file exists: each person runs it on their laptop before the project starts. It checks Python, packages, Git, the GPU, PyTorch, disk space and speed. It can also download the data and the pretrained weights. It writes a short report to <code>docs/setup/&lt;name&gt;.md</code>, and prints one line for the team chat.</p>
+<p><strong>Module docstring and constants (lines 1 to 39)</strong></p>
+<p>The docstring explains the usage and the six checks. The constants that matter are:</p>
+<pre><code class="language-python">ROOT = Path(__file__).resolve().parent
+RESULTS = []  # each entry: (check, status, detail, fix)
+INFO = {}     # values used for the summary line
+
+PACKAGES = [
+    &quot;torch&quot;, &quot;torchvision&quot;, &quot;numpy&quot;, &quot;pandas&quot;, &quot;matplotlib&quot;, &quot;scikit-learn&quot;,
+    &quot;pillow&quot;, &quot;fastapi&quot;, &quot;uvicorn&quot;, &quot;python-multipart&quot;, &quot;notebook&quot;, &quot;ipykernel&quot;,
+]
+TRAIN_IMAGES = 18900  # 70% of 27,000
+BATCH = 64
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>30</td>
+<td>The repository folder, found from the file's place.</td>
+<td>Path relative to the file</td>
+<td>Same reason as in <code>utils.py</code>.</td>
+</tr>
+<tr>
+<td>31</td>
+<td>List of results. Each check adds one tuple: check, status, detail, fix.</td>
+<td>Global list</td>
+<td>The summary and the saved file are built from this list.</td>
+</tr>
+<tr>
+<td>32</td>
+<td>Dictionary of values for the team-chat line (Python version, torch, GPU, verdict).</td>
+<td>Global dictionary</td>
+<td></td>
+</tr>
+<tr>
+<td>34 to 37</td>
+<td>The packages that must be installed.</td>
+<td>Dependency check</td>
+<td>Torch and torchvision are listed here but installed by a separate command.</td>
+</tr>
+<tr>
+<td>38 and 39</td>
+<td>Training image count (70% of 27,000) and batch size 64.</td>
+<td>Constants</td>
+<td>Used for the speed estimate.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>record</code> (lines 42 to 48)</strong></p>
+<pre><code class="language-python">def record(check, status, detail, fix=&quot;&quot;):
+    &quot;&quot;&quot;Store one result and print it.&quot;&quot;&quot;
+    RESULTS.append((check, status, detail, fix))
+    line = f&quot;  [{status}] {check}: {detail}&quot;
+    if fix and status != &quot;OK&quot;:
+        line += f&quot;\n         fix: {fix}&quot;
+    print(line)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>43</td>
+<td>Stores the result in the list.</td>
+<td>Accumulator</td>
+<td></td>
+</tr>
+<tr>
+<td>44</td>
+<td>Builds the printed line, for example <code>[OK] Python: 3.12.x</code>.</td>
+<td>String formatting</td>
+<td></td>
+</tr>
+<tr>
+<td>45 and 46</td>
+<td>If the result is not OK and there is a fix, shows the fix under it.</td>
+<td>One-line fix</td>
+<td>Each message tells the person what to do.</td>
+</tr>
+<tr>
+<td>47</td>
+<td>Prints the line.</td>
+<td>Output</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>run_check</code> (lines 51 to 58)</strong></p>
+<pre><code class="language-python">def run_check(title, func):
+    &quot;&quot;&quot;Run one check. If it crashes, record FAIL and keep going.&quot;&quot;&quot;
+    print(f&quot;\n== {title}&quot;)
+    try:
+        func()
+    except Exception as err:  # never stop the other checks
+        record(title, &quot;FAIL&quot;, f&quot;unexpected error: {type(err).__name__}: {err}&quot;,
+               &quot;send this line to Nitin&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>52</td>
+<td>Prints a heading for the check.</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>53 to 55</td>
+<td>Calls the check function.</td>
+<td>Function as argument</td>
+<td>The checks are passed in one by one from <code>main</code>.</td>
+</tr>
+<tr>
+<td>56 and 57</td>
+<td>If anything crashes, records a FAIL with the error and continues.</td>
+<td>Exception handling</td>
+<td>One broken check must not stop the others. The message asks the person to send it to Nitin.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>run_cmd</code> (lines 61 to 67)</strong></p>
+<pre><code class="language-python">def run_cmd(args, timeout=10):
+    &quot;&quot;&quot;Run a command and return its text output, or '' if it fails.&quot;&quot;&quot;
+    try:
+        out = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return out.stdout.strip() if out.returncode == 0 else &quot;&quot;
+    except (OSError, subprocess.SubprocessError):
+        return &quot;&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64</td>
+<td>Runs a program and captures its text output, with a time limit of 10 seconds.</td>
+<td><code>subprocess</code></td>
+<td>A hung program cannot block the check forever.</td>
+</tr>
+<tr>
+<td>65</td>
+<td>Returns the output if the program succeeded, otherwise an empty string.</td>
+<td>Return code</td>
+<td>An empty string means "not found" for the callers.</td>
+</tr>
+<tr>
+<td>66 and 67</td>
+<td>If the program does not exist or times out, returns an empty string.</td>
+<td>Error handling</td>
+<td><code>git</code> or <code>nvidia-smi</code> may simply be missing.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>check_python</code> (lines 72 to 83)</strong></p>
+<pre><code class="language-python">def check_python():
+    v = sys.version_info
+    ver = f&quot;{v.major}.{v.minor}.{v.micro}&quot;
+    INFO[&quot;python&quot;] = ver
+    if (v.major, v.minor) == (3, 12):
+        record(&quot;Python&quot;, &quot;OK&quot;, ver)
+    elif (v.major, v.minor) in [(3, 10), (3, 11), (3, 13)]:
+        record(&quot;Python&quot;, &quot;WARN&quot;, f&quot;{ver} - team standard is 3.12&quot;,
+               &quot;install Python 3.12 from python.org and make a new .venv with it&quot;)
+    else:
+        record(&quot;Python&quot;, &quot;FAIL&quot;, f&quot;{ver} is not supported&quot;,
+               &quot;install Python 3.12 from python.org and make a new .venv with it&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>73 to 75</td>
+<td>Reads the running Python version and stores it for the summary.</td>
+<td><code>sys.version_info</code></td>
+<td></td>
+</tr>
+<tr>
+<td>76 and 77</td>
+<td>Python 3.12 is OK (the team standard).</td>
+<td>Standard</td>
+<td></td>
+</tr>
+<tr>
+<td>78 and 79</td>
+<td>3.10, 3.11 and 3.13 are WARN (may work, not the team standard).</td>
+<td>Warning</td>
+<td></td>
+</tr>
+<tr>
+<td>80 to 83</td>
+<td>Any other version is FAIL.</td>
+<td>Hard requirement</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>check_packages</code> (lines 86 to 95)</strong></p>
+<pre><code class="language-python">def check_packages():
+    for name in PACKAGES:
+        try:
+            record(name, &quot;OK&quot;, importlib.metadata.version(name))
+        except importlib.metadata.PackageNotFoundError:
+            if name in (&quot;torch&quot;, &quot;torchvision&quot;):
+                fix = &quot;install PyTorch with the command in README, Setup step 4&quot;
+            else:
+                fix = &quot;pip install -r requirements.txt&quot;
+            record(name, &quot;FAIL&quot;, &quot;MISSING&quot;, fix)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>87</td>
+<td>Goes through each package name.</td>
+<td>Loop</td>
+<td></td>
+</tr>
+<tr>
+<td>88 and 89</td>
+<td>Asks the installed package list for its version and records OK.</td>
+<td><code>importlib.metadata</code></td>
+<td>Works without importing the package, so it is fast.</td>
+</tr>
+<tr>
+<td>90 to 95</td>
+<td>If the package is missing, FAIL with the right fix: torch needs the special PyTorch command, others need <code>requirements.txt</code>.</td>
+<td>Exception, specific fix</td>
+<td>Torch is installed with a CUDA-specific command, not with <code>pip install -r</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>check_git</code> (lines 98 to 114)</strong></p>
+<pre><code class="language-python">def check_git():
+    version = run_cmd([&quot;git&quot;, &quot;--version&quot;])
+    if not version:
+        record(&quot;Git&quot;, &quot;FAIL&quot;, &quot;git not found&quot;, &quot;install Git from git-scm.com, then reopen PowerShell&quot;)
+        return
+    record(&quot;Git&quot;, &quot;OK&quot;, version)
+    name = run_cmd([&quot;git&quot;, &quot;config&quot;, &quot;user.name&quot;])
+    email = run_cmd([&quot;git&quot;, &quot;config&quot;, &quot;user.email&quot;])
+    record(&quot;Git user.name&quot;, &quot;OK&quot; if name else &quot;WARN&quot;, name or &quot;not set&quot;,
+           'git config --global user.name &quot;Your Name&quot;')
+    if email:
+        record(&quot;Git user.email&quot;, &quot;OK&quot;, email)
+    else:
+        record(&quot;Git user.email&quot;, &quot;WARN&quot;, &quot;not set&quot;,
+               'git config --global user.email &quot;you@example.com&quot;')
+    print(&quot;  REMINDER: this must be the same email as your GitHub account,&quot;)
+    print(&quot;            or your commits will not count as yours.&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>99 to 103</td>
+<td>Checks that Git runs. If not, FAIL and stop this check.</td>
+<td>Required tool</td>
+<td></td>
+</tr>
+<tr>
+<td>104 and 105</td>
+<td>Reads the Git user name and email.</td>
+<td>Git config</td>
+<td>Commits are linked to a person by these values.</td>
+</tr>
+<tr>
+<td>106 to 108</td>
+<td>Name missing is a WARN with the command to set it.</td>
+<td>Warning</td>
+<td></td>
+</tr>
+<tr>
+<td>109 to 113</td>
+<td>Email is OK or WARN with the command.</td>
+<td>Warning</td>
+<td></td>
+</tr>
+<tr>
+<td>114 and 115</td>
+<td>Prints a reminder that the email must match GitHub.</td>
+<td>Output</td>
+<td>Otherwise commits do not count for the person in GitHub's statistics.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>check_nvidia</code> (lines 117 to 130)</strong></p>
+<pre><code class="language-python">def check_nvidia():
+    # nvidia-smi is normally on PATH; on some laptops it is only in the NVIDIA folder
+    out = &quot;&quot;
+    for exe in [&quot;nvidia-smi&quot;, r&quot;C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe&quot;]:
+        out = run_cmd([exe, &quot;--query-gpu=name,driver_version,memory.total&quot;,
+                       &quot;--format=csv,noheader&quot;])
+        if out:
+            break
+    if not out:
+        record(&quot;NVIDIA GPU&quot;, &quot;WARN&quot;, &quot;no NVIDIA GPU or driver found&quot;,
+               &quot;the project still runs on CPU, but training will be slow&quot;)
+        return
+    INFO[&quot;gpu_line&quot;] = out.splitlines()[0]
+    record(&quot;NVIDIA GPU&quot;, &quot;OK&quot;, INFO[&quot;gpu_line&quot;])
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>119 to 124</td>
+<td>Tries <code>nvidia-smi</code> on the PATH, then the default NVIDIA install folder. Stops at the first that works.</td>
+<td>Fallback search</td>
+<td>On some laptops the tool is not on the PATH.</td>
+</tr>
+<tr>
+<td>125 to 128</td>
+<td>No GPU found is a WARN, not a FAIL, because the project still runs on CPU.</td>
+<td>Warning</td>
+<td></td>
+</tr>
+<tr>
+<td>129 and 130</td>
+<td>Stores the first line (GPU name, driver version, memory) and records OK.</td>
+<td>Output</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>check_torch</code> (lines 133 to 158)</strong></p>
+<pre><code class="language-python">def check_torch():
+    try:
+        import torch
+    except ImportError:
+        record(&quot;PyTorch&quot;, &quot;FAIL&quot;, &quot;torch is not installed&quot;,
+               &quot;install PyTorch with the command in README, Setup step 4&quot;)
+        return
+    cuda_build = torch.version.cuda or &quot;none (CPU-only build)&quot;
+    cuda_ok = torch.cuda.is_available()
+    INFO[&quot;torch&quot;] = f&quot;{torch.__version__} + CUDA {cuda_build}&quot;
+    record(&quot;PyTorch&quot;, &quot;OK&quot;, f&quot;version {torch.__version__}, CUDA build {cuda_build}, &quot;
+                            f&quot;cuda available = {cuda_ok}&quot;)
+    if cuda_ok:
+        name = torch.cuda.get_device_name(0)
+        vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+        INFO[&quot;gpu&quot;] = f&quot;{name}, {vram:.1f} GB VRAM&quot;
+        record(&quot;PyTorch GPU&quot;, &quot;OK&quot;, INFO[&quot;gpu&quot;])
+    elif &quot;gpu_line&quot; in INFO:
+        INFO[&quot;gpu&quot;] = &quot;CPU only (CPU-only PyTorch installed)&quot;
+        record(&quot;PyTorch GPU&quot;, &quot;FAIL&quot;, &quot;nvidia-smi found a GPU but PyTorch cannot use it&quot;,
+               &quot;you installed the CPU-only PyTorch; reinstall using the CUDA command from &quot;
+               &quot;https://pytorch.org/get-started/locally/ (Windows, Pip, CUDA)&quot;)
+    else:
+        INFO[&quot;gpu&quot;] = &quot;CPU only&quot;
+        record(&quot;PyTorch GPU&quot;, &quot;WARN&quot;, &quot;no GPU for PyTorch, will use CPU&quot;,
+               &quot;fine for this check; training needs a GPU&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>134 to 139</td>
+<td>Imports PyTorch. If missing: FAIL with the install hint.</td>
+<td>Import check</td>
+<td></td>
+</tr>
+<tr>
+<td>140</td>
+<td>Reads the CUDA version PyTorch was built with, or says it is CPU-only.</td>
+<td><code>torch.version.cuda</code></td>
+<td></td>
+</tr>
+<tr>
+<td>141</td>
+<td>Asks if PyTorch can use the GPU.</td>
+<td><code>torch.cuda.is_available()</code></td>
+<td></td>
+</tr>
+<tr>
+<td>142 to 144</td>
+<td>Records the PyTorch version and CUDA build.</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>145 to 149</td>
+<td>If the GPU works: reads its name and memory and records OK.</td>
+<td><code>get_device_properties</code></td>
+<td>VRAM is the GPU's own memory.</td>
+</tr>
+<tr>
+<td>150 to 154</td>
+<td>nvidia-smi sees a GPU but PyTorch does not: this is the CPU-only PyTorch problem. FAIL with the reinstall link.</td>
+<td>Diagnosis</td>
+<td>The most common setup problem on Windows (see the README).</td>
+</tr>
+<tr>
+<td>155 to 158</td>
+<td>No GPU at all: WARN, the check still passes.</td>
+<td>Warning</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>check_disk</code> (lines 161 to 167)</strong></p>
+<pre><code class="language-python">def check_disk():
+    free_gb = shutil.disk_usage(ROOT).free / 1024 ** 3
+    if free_gb &lt; 5:
+        record(&quot;Disk space&quot;, &quot;WARN&quot;, f&quot;only {free_gb:.1f} GB free&quot;,
+               &quot;free some space: the dataset and PyTorch need several GB&quot;)
+    else:
+        record(&quot;Disk space&quot;, &quot;OK&quot;, f&quot;{free_gb:.1f} GB free&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>162</td>
+<td>Reads the free space on the drive of the repository, in GB.</td>
+<td><code>shutil.disk_usage</code></td>
+<td></td>
+</tr>
+<tr>
+<td>163 to 167</td>
+<td>Under 5 GB is a WARN, otherwise OK.</td>
+<td>Threshold</td>
+<td>The dataset and PyTorch need several GB.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>make_small_cnn</code> (lines 170 to 179)</strong></p>
+<pre><code class="language-python">def make_small_cnn(torch):
+    &quot;&quot;&quot;Small scratch CNN: 3 blocks of Conv-BatchNorm-ReLU-MaxPool, then a Linear to 10 classes.&quot;&quot;&quot;
+    nn = torch.nn
+
+    def block(cin, cout):
+        return nn.Sequential(nn.Conv2d(cin, cout, 3, padding=1), nn.BatchNorm2d(cout),
+                             nn.ReLU(), nn.MaxPool2d(2))
+
+    return nn.Sequential(block(3, 32), block(32, 64), block(64, 128),
+                         nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(128, 10))
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>171 to 172</td>
+<td>Gets the <code>nn</code> module from the torch object passed in.</td>
+<td>Dependency passed in</td>
+<td>The function does not import torch at the top, so the check can fail softly.</td>
+</tr>
+<tr>
+<td>174 to 176</td>
+<td>A block is convolution, BatchNorm, ReLU and MaxPool.</td>
+<td>Convolution block</td>
+<td>The same pattern as Tejash's baseline.</td>
+</tr>
+<tr>
+<td>178 and 179</td>
+<td>Three blocks (32, 64, 128 filters), then pooling, flatten and a linear layer to 10 classes.</td>
+<td>Network</td>
+<td>It is a benchmark model, not the real project CNN. It is built here to measure speed.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>sync</code> (lines 182 to 185)</strong></p>
+<pre><code class="language-python">def sync(torch, device):
+    &quot;&quot;&quot;GPU runs are asynchronous: wait for them to finish before reading the clock.&quot;&quot;&quot;
+    if device.type == &quot;cuda&quot;:
+        torch.cuda.synchronize()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>183 to 185</td>
+<td>On a GPU, waits until all queued work has finished.</td>
+<td><code>torch.cuda.synchronize</code></td>
+<td>The GPU runs in the background. Without waiting, the timer would measure too little time.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>benchmark</code> (lines 188 to 209)</strong></p>
+<pre><code class="language-python">def benchmark(torch, model, device, steps, warmup=5):
+    &quot;&quot;&quot;Train on random 64x64 data and return images per second.&quot;&quot;&quot;
+    model = model.to(device)
+    model.train()
+    opt = torch.optim.Adam(model.parameters())
+    loss_fn = torch.nn.CrossEntropyLoss()
+    x = torch.rand(BATCH, 3, 64, 64, device=device)
+    y = torch.randint(0, 10, (BATCH,), device=device)
+
+    def one_step():
+        opt.zero_grad()
+        loss_fn(model(x), y).backward()
+        opt.step()
+
+    for _ in range(warmup):
+        one_step()
+    sync(torch, device)
+    start = time.perf_counter()
+    for _ in range(steps):
+        one_step()
+    sync(torch, device)
+    return steps * BATCH / (time.perf_counter() - start)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>190 to 192</td>
+<td>Moves the model to the device and puts it in training mode.</td>
+<td>Training step</td>
+<td>A speed test must train, not only score.</td>
+</tr>
+<tr>
+<td>193 and 194</td>
+<td>Makes Adam and cross-entropy, as in real training.</td>
+<td>Optimiser, loss</td>
+<td></td>
+</tr>
+<tr>
+<td>195 and 196</td>
+<td>Makes random images and random labels with batch size 64.</td>
+<td>Synthetic data</td>
+<td>Speed does not depend on the real pictures.</td>
+</tr>
+<tr>
+<td>198 to 201</td>
+<td>One training step: clear gradients, forward, loss, backward, update.</td>
+<td>Training step</td>
+<td>The same five steps as <code>train()</code>.</td>
+</tr>
+<tr>
+<td>203 and 204</td>
+<td>Runs 5 warm-up steps and waits.</td>
+<td>Warm-up</td>
+<td>The first steps are slower (memory setup, GPU start-up). They must not be timed.</td>
+</tr>
+<tr>
+<td>205 to 209</td>
+<td>Times the steps and returns images per second.</td>
+<td>Throughput</td>
+<td>Images per second = steps times batch size divided by seconds.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>check_speed</code> (lines 212 to 250)</strong></p>
+<pre><code class="language-python">def check_speed():
+    try:
+        import torch
+        import torchvision
+    except ImportError:
+        record(&quot;Speed test&quot;, &quot;FAIL&quot;, &quot;torch or torchvision missing, cannot test&quot;,
+               &quot;install PyTorch first (README, Setup step 4)&quot;)
+        return
+    device = torch.device(&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
+    steps = 30 if device.type == &quot;cuda&quot; else 5
+    print(f&quot;  running on {device}: {steps} timed steps per model, batch {BATCH}, random data&quot;)
+    models = {
+        &quot;Small CNN&quot;: lambda: make_small_cnn(torch),
+        &quot;ResNet-18&quot;: lambda: torchvision.models.resnet18(weights=None, num_classes=10),
+    }
+    for name, build in models.items():
+        if device.type == &quot;cuda&quot;:
+            torch.cuda.reset_peak_memory_stats()
+        try:
+            ips = benchmark(torch, build(), device, steps)
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            record(f&quot;Speed {name}&quot;, &quot;WARN&quot;, f&quot;batch {BATCH} does not fit, use 32&quot;,
+                   &quot;set the batch size to 32 in train.py&quot;)
+            if name == &quot;ResNet-18&quot;:  # no timing possible, so give the cautious verdict
+                INFO[&quot;resnet_sec&quot;] = &quot;out of memory&quot;
+                verdict(float(&quot;inf&quot;))
+            continue
+        sec_epoch = TRAIN_IMAGES / ips
+        detail = (f&quot;{ips:.0f} images/s, {sec_epoch:.0f} s per epoch, &quot;
+                  f&quot;{sec_epoch * 20 / 60:.1f} min for 20 epochs&quot;)
+        if device.type == &quot;cuda&quot;:
+            peak = torch.cuda.max_memory_allocated() / 1024 ** 3
+            detail += f&quot;, peak VRAM {peak:.2f} GB&quot;
+        record(f&quot;Speed {name}&quot;, &quot;OK&quot;, detail)
+        if name == &quot;ResNet-18&quot;:
+            INFO[&quot;resnet_sec&quot;] = f&quot;{sec_epoch:.0f}&quot;
+            verdict(sec_epoch)
+    print(&quot;  NOTE: these are lower bounds, because real runs also load and augment images.&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>213 to 219</td>
+<td>Imports torch and torchvision. If missing: FAIL and stop.</td>
+<td>Import check</td>
+<td></td>
+</tr>
+<tr>
+<td>220 and 221</td>
+<td>Picks the device. Uses 30 timed steps on a GPU and only 5 on a CPU.</td>
+<td>Time budget</td>
+<td>A CPU is much slower, so fewer steps keep the check short.</td>
+</tr>
+<tr>
+<td>222</td>
+<td>Prints what is being tested.</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>223 to 226</td>
+<td>Two models: a small CNN and ResNet-18 (random weights, 10 classes).</td>
+<td>Benchmark models</td>
+<td>ResNet-18 is the verdict model. Random weights are fine, because speed does not depend on the weights.</td>
+</tr>
+<tr>
+<td>227</td>
+<td>Goes through each model.</td>
+<td>Loop</td>
+<td></td>
+</tr>
+<tr>
+<td>228 and 229</td>
+<td>On a GPU, resets the peak memory counter.</td>
+<td>Memory counter</td>
+<td>Needed to report peak VRAM later.</td>
+</tr>
+<tr>
+<td>230 and 231</td>
+<td>Runs the benchmark for this model and gets images per second.</td>
+<td><code>benchmark</code></td>
+<td></td>
+</tr>
+<tr>
+<td>232 to 239</td>
+<td>If the GPU runs out of memory: WARN, free the cache, and for ResNet-18 give the cautious verdict.</td>
+<td>Out-of-memory handling</td>
+<td>The advice is "use batch 32", which is a manual change. The check does not change <code>train.py</code> itself, so this advice is for the person to act on.</td>
+</tr>
+<tr>
+<td>240 and 241</td>
+<td>Converts images per second into seconds per epoch on the 18,900 training images, and the 20-epoch time.</td>
+<td>Projection</td>
+<td>Images per second is a lower bound: real runs also load and augment images.</td>
+</tr>
+<tr>
+<td>243 to 245</td>
+<td>On a GPU adds the peak VRAM used.</td>
+<td>Memory</td>
+<td></td>
+</tr>
+<tr>
+<td>246 to 249</td>
+<td>Records OK. For ResNet-18 stores the seconds and gives the verdict.</td>
+<td>Verdict input</td>
+<td></td>
+</tr>
+<tr>
+<td>250</td>
+<td>Prints the note that these numbers are lower bounds.</td>
+<td>Honesty note</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>verdict</code> (lines 253 to 262)</strong></p>
+<pre><code class="language-python">def verdict(sec_epoch):
+    &quot;&quot;&quot;Turn ResNet-18 seconds per epoch into a plain advice line.&quot;&quot;&quot;
+    if sec_epoch &lt;= 60:
+        text = &quot;GPU-ready: can own a training part (B, C or D)&quot;
+    elif sec_epoch &lt;= 300:
+        text = &quot;OK for small training runs (B)&quot;
+    else:
+        text = &quot;Take a non-training part (A or E), or train on a teammate's GPU&quot;
+    INFO[&quot;verdict&quot;] = text
+    record(&quot;Verdict&quot;, &quot;OK&quot;, text)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>255 and 256</td>
+<td>Up to 60 seconds per epoch: GPU-ready, can own a training part.</td>
+<td>Threshold</td>
+<td></td>
+</tr>
+<tr>
+<td>257 and 258</td>
+<td>60 to 300 seconds: OK for small runs.</td>
+<td>Threshold</td>
+<td></td>
+</tr>
+<tr>
+<td>259 and 260</td>
+<td>Above 300 seconds: take a non-training part, or use a teammate's GPU.</td>
+<td>Threshold</td>
+<td>The thresholds are a team judgement, not a law.</td>
+</tr>
+<tr>
+<td>261 and 262</td>
+<td>Stores the text for the team line and records it.</td>
+<td>Output</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>check_download</code> (lines 265 to 289)</strong></p>
+<pre><code class="language-python">def check_download():
+    from torchvision import datasets, models
+    from torchvision.models import MobileNet_V2_Weights, ResNet18_Weights
+
+    data_dir = ROOT / &quot;data&quot;
+    data_dir.mkdir(exist_ok=True)
+    try:
+        ds = datasets.EuroSAT(root=str(data_dir), download=True)
+        n, k = len(ds), len(ds.classes)
+        ok = n == 27000 and k == 10
+        record(&quot;EuroSAT dataset&quot;, &quot;OK&quot; if ok else &quot;FAIL&quot;, f&quot;{n} images, {k} classes&quot;,
+               &quot;&quot; if ok else &quot;delete the data/eurosat folder and run --download again&quot;)
+    except Exception as err:
+        record(&quot;EuroSAT dataset&quot;, &quot;FAIL&quot;, f&quot;download failed: {err}&quot;,
+               &quot;check your internet connection and run --download again&quot;)
+    for label, build in [
+        (&quot;ResNet-18 weights&quot;, lambda: models.resnet18(weights=ResNet18_Weights.DEFAULT)),
+        (&quot;MobileNetV2 weights&quot;, lambda: models.mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT)),
+    ]:
+        try:
+            build()
+            record(label, &quot;OK&quot;, &quot;downloaded to the torch cache&quot;)
+        except Exception as err:
+            record(label, &quot;FAIL&quot;, f&quot;download failed: {err}&quot;,
+                   &quot;check your internet connection and run --download again&quot;)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>266 and 267</td>
+<td>Imports the dataset and model tools (only when <code>--download</code> is used).</td>
+<td>Lazy import</td>
+<td>Keeps the normal check light.</td>
+</tr>
+<tr>
+<td>269 and 270</td>
+<td>Makes the <code>data/</code> folder if needed.</td>
+<td>Folder</td>
+<td></td>
+</tr>
+<tr>
+<td>271 and 272</td>
+<td>Downloads EuroSAT into <code>data/</code> (only if it is missing), then reads the count and the classes.</td>
+<td>Dataset download</td>
+<td>torchvision stores it in <code>data/eurosat/2750</code>.</td>
+</tr>
+<tr>
+<td>273 to 277</td>
+<td>Checks that there are 27,000 images and 10 classes. OK or FAIL with a fix.</td>
+<td>Sanity check</td>
+<td>Catches a partial download.</td>
+</tr>
+<tr>
+<td>278 to 280</td>
+<td>A download error becomes FAIL with a fix.</td>
+<td>Error handling</td>
+<td></td>
+</tr>
+<tr>
+<td>281 to 290</td>
+<td>For each pretrained model, builds it with its default weights. This downloads the weights into the torch cache.</td>
+<td>Pretrained weights</td>
+<td><code>build()</code> is a lambda, so the download happens only inside the <code>try</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>save_summary</code> (lines 294 to 304)</strong></p>
+<pre><code class="language-python">def save_summary(name, line):
+    &quot;&quot;&quot;Write docs/setup/&lt;name&gt;.md, overwriting it if it exists.&quot;&quot;&quot;
+    folder = ROOT / &quot;docs&quot; / &quot;setup&quot;
+    folder.mkdir(parents=True, exist_ok=True)
+    safe = &quot;&quot;.join(c for c in name.lower() if c.isalnum())
+    rows = [&quot;| Check | Status | Detail |&quot;, &quot;|---|---|---|&quot;]
+    rows += [f&quot;| {c} | {s} | {d} |&quot; for c, s, d, _ in RESULTS]
+    text = (f&quot;# Setup report: {name}\n\n&quot; + &quot;\n&quot;.join(rows) +
+            f&quot;\n\nTeam line:\n\n    {line}\n&quot;)
+    (folder / f&quot;{safe}.md&quot;).write_text(text, encoding=&quot;utf-8&quot;)
+    return folder / f&quot;{safe}.md&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>296 and 297</td>
+<td>Makes the <code>docs/setup</code> folder if needed.</td>
+<td>Folder</td>
+<td></td>
+</tr>
+<tr>
+<td>298</td>
+<td>Makes a safe file name: lower case, letters and digits only.</td>
+<td>String cleaning</td>
+<td>"Srivalli" becomes "srivalli".</td>
+</tr>
+<tr>
+<td>299 to 301</td>
+<td>Builds a Markdown table of all results.</td>
+<td>Markdown</td>
+<td></td>
+</tr>
+<tr>
+<td>302 to 304</td>
+<td>Adds a title, the table and the team line, then writes the file in UTF-8.</td>
+<td>File output</td>
+<td>The file goes into git through a pull request.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>main</code> (lines 307 to 338)</strong></p>
+<pre><code class="language-python">def main():
+    parser = argparse.ArgumentParser(description=&quot;Check this laptop for the EuroSAT project.&quot;)
+    parser.add_argument(&quot;--name&quot;, required=True, help=&quot;your first name, e.g. Tejash&quot;)
+    parser.add_argument(&quot;--download&quot;, action=&quot;store_true&quot;,
+                        help=&quot;also download EuroSAT and the pretrained weights&quot;)
+    args = parser.parse_args()
+    sys.stdout.reconfigure(errors=&quot;replace&quot;)  # an odd character in an error must not crash the printing
+
+    run_check(&quot;1. Python&quot;, check_python)
+    run_check(&quot;2. Packages&quot;, check_packages)
+    run_check(&quot;3. Git&quot;, check_git)
+    run_check(&quot;4. NVIDIA GPU&quot;, check_nvidia)
+    run_check(&quot;5. PyTorch and GPU&quot;, check_torch)
+    run_check(&quot;6. Disk space&quot;, check_disk)
+    run_check(&quot;7. Speed test (project score)&quot;, check_speed)
+    if args.download:
+        run_check(&quot;8. Download data and weights&quot;, check_download)
+
+    print(&quot;\n========== SUMMARY ==========&quot;)
+    for check, status, detail, _ in RESULTS:
+        print(f&quot;{status:5} {check:24} {detail}&quot;)
+
+    line = (f&quot;{args.name} | Python {INFO.get('python', '?')} | torch {INFO.get('torch', '?')} | &quot;
+            f&quot;{INFO.get('gpu', '?')} | ResNet-18 {INFO.get('resnet_sec', '?')} s/epoch | &quot;
+            f&quot;{INFO.get('verdict', '?')}&quot;)
+    print(&quot;\nPaste this line in the team chat:&quot;)
+    print(line)
+    path = save_summary(args.name, line)
+    print(f&quot;\nSaved to {path}&quot;)
+
+    failed = any(status == &quot;FAIL&quot; for _, status, _, _ in RESULTS)
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>308 to 312</td>
+<td>Reads the command line: <code>--name</code> (required) and <code>--download</code> (optional yes/no).</td>
+<td><code>argparse</code></td>
+<td>Example: <code>python check_setup.py --name Tejash --download</code>.</td>
+</tr>
+<tr>
+<td>313</td>
+<td>Makes printing safe for odd characters.</td>
+<td><code>reconfigure</code></td>
+<td>A strange character in an error message must not crash the report.</td>
+</tr>
+<tr>
+<td>315 to 321</td>
+<td>Runs the seven standard checks in order.</td>
+<td>Ordered checks</td>
+<td>Each check is independent, because <code>run_check</code> catches crashes.</td>
+</tr>
+<tr>
+<td>322 and 323</td>
+<td>Runs the download check only with <code>--download</code>.</td>
+<td>Optional step</td>
+<td>Downloads are large (about 150 MB), so they are not automatic.</td>
+</tr>
+<tr>
+<td>325 to 327</td>
+<td>Prints the summary table, one line per result.</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>329 to 331</td>
+<td>Builds the team-chat line from the stored values.</td>
+<td>Team line</td>
+<td>Shows Python, torch, GPU, ResNet-18 seconds per epoch and the verdict.</td>
+</tr>
+<tr>
+<td>332 to 335</td>
+<td>Prints the line and saves the report file.</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>337 and 338</td>
+<td>Exits with code 1 if any FAIL, otherwise 0.</td>
+<td>Exit code</td>
+<td>A script or teacher can see whether the laptop is ready. WARN does not fail.</td>
+</tr>
+<tr>
+<td>341 and 342</td>
+<td>Runs <code>main()</code> only when started directly.</td>
+<td><code>__main__</code> guard</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3>4.6 <code>app/server.py</code> (the website server, all of it)</h3>
+<p>Why this file exists: the team built a website (pages in <code>frontend/</code>, by Tejash). One program serves the pages and three API routes. The file header says the file has no named owner. Nitin ran it and checked it with real images (log, 2026-11-05). It runs offline and listens on this computer only.</p>
+<p><strong>Imports, folders and constants (lines 16 to 41)</strong></p>
+<pre><code class="language-python">FRONTEND = ROOT.parent / &quot;frontend&quot;                 # Tejash's pages
+CLASSES = [&quot;AnnualCrop&quot;, &quot;Forest&quot;, &quot;HerbaceousVegetation&quot;, &quot;Highway&quot;, &quot;Industrial&quot;,
+           &quot;Pasture&quot;, &quot;PermanentCrop&quot;, &quot;Residential&quot;, &quot;River&quot;, &quot;SeaLake&quot;]    # EuroSAT folder order
+MAX_UPLOAD = 15_000_000                              # bytes
+HEADLINE = &quot;mobilenet_v2_full_frac1_seed0&quot;           # the model behind the metrics page (Part E)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>16 to 35</td>
+<td>Imports: base64 and io for the picture, threading for the lock, numpy and pandas, torch, FastAPI, CORS, file responses, static files, colour maps, Pillow and torchvision transforms. Also <code>build_model</code> from <code>train.py</code> and the paths from <code>utils.py</code>.</td>
+<td>Libraries and reuse</td>
+<td><code>build_model</code> is reused, so the website uses the same model code as the training.</td>
+</tr>
+<tr>
+<td>37</td>
+<td><code>FRONTEND</code> is the <code>frontend/</code> folder next to the Backend folder.</td>
+<td>Path</td>
+<td><code>ROOT.parent</code> goes from <code>Backend/</code> to the repository root.</td>
+</tr>
+<tr>
+<td>38 and 39</td>
+<td>The ten class names in the same order as EuroSAT's folders.</td>
+<td>Label order</td>
+<td>The index of the output score maps to the name at the same position.</td>
+</tr>
+<tr>
+<td>40</td>
+<td>Upload limit 15 MB.</td>
+<td>Limit</td>
+<td>Stops very large uploads from filling memory.</td>
+</tr>
+<tr>
+<td>41</td>
+<td>The model used for the metrics page.</td>
+<td>Constant</td>
+<td>The metrics page uses the seed-0 model's confusion matrix.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>last_relu</code> (lines 44 to 46)</strong></p>
+<pre><code class="language-python">def last_relu(net):
+    &quot;&quot;&quot;Last ReLU of the scratch CNN = end of its last convolution block.&quot;&quot;&quot;
+    return [m for m in net if isinstance(m, nn.ReLU)][-1]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>45</td>
+<td>Finds the last ReLU layer in the scratch CNN.</td>
+<td>Layer search</td>
+<td>Grad-CAM needs a convolution layer. The last ReLU is the end of the last convolution block.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>CHOICES</code> (lines 49 to 54)</strong></p>
+<pre><code class="language-python">CHOICES = {
+    &quot;mobilenet_v2_full&quot;: (&quot;MobileNetV2 (fully fine-tuned)&quot;, lambda net: net.features[-1]),
+    &quot;resnet18_full&quot;: (&quot;ResNet-18 (fully fine-tuned)&quot;, lambda net: net.layer4[-1]),
+    &quot;scratch_cnn&quot;: (&quot;Scratch CNN (our own, 3 blocks)&quot;, last_relu),
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>50 to 54</td>
+<td>Three models the website offers. Each has a label and a function that finds the layer for Grad-CAM.</td>
+<td>Dictionary of functions</td>
+<td>The "last block" differs per architecture. The lambda finds it only when needed.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>TRANSFORM</code> (lines 56 to 60)</strong></p>
+<pre><code class="language-python">TRANSFORM = transforms.Compose([
+    transforms.Resize((64, 64)),                     # the models were trained on 64 x 64 tiles
+    transforms.ToTensor(),
+    transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+])
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>57</td>
+<td>Resizes any uploaded picture to 64 x 64.</td>
+<td>Resize</td>
+<td>The models were trained on 64 x 64 tiles, so every upload is shrunk or stretched to that size.</td>
+</tr>
+<tr>
+<td>58</td>
+<td>Turns the picture into a tensor with values 0 to 1.</td>
+<td><code>ToTensor</code></td>
+<td>Same as in training.</td>
+</tr>
+<tr>
+<td>59</td>
+<td>Normalises with the ImageNet numbers.</td>
+<td>Normalisation</td>
+<td>Must match training, or predictions would be wrong.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Cache and lock (lines 62 to 63)</strong></p>
+<pre><code class="language-python">_loaded = {}                                         # model id -&gt; (network, Grad-CAM layer)
+_lock = threading.Lock()                             # Grad-CAM puts hooks on the shared network: one request at a time
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>62</td>
+<td>Keeps each loaded model, so the weights are read from disk only once.</td>
+<td>Cache</td>
+<td></td>
+</tr>
+<tr>
+<td>63</td>
+<td>One lock for the Grad-CAM step.</td>
+<td>Thread lock</td>
+<td>Grad-CAM adds hooks to the shared network. Two requests at once would mix up their hooks. The price is that uploads wait in turn.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>available</code> (lines 66 to 67)</strong></p>
+<pre><code class="language-python">def available():
+    return [i for i in CHOICES if (MODELS_DIR / f&quot;{i}_frac1_seed0.pth&quot;).exists()]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>67</td>
+<td>Returns the model ids whose full-data weight file is in <code>models/</code>.</td>
+<td>File check</td>
+<td>The name is the same one <code>train()</code> writes (<code>frac1_seed0</code>). A missing file means the model is not offered.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>get_model</code> (lines 70 to 76)</strong></p>
+<pre><code class="language-python">def get_model(model_id):
+    if model_id not in _loaded:
+        net, _ = build_model(model_id)
+        net.load_state_dict(torch.load(MODELS_DIR / f&quot;{model_id}_frac1_seed0.pth&quot;, map_location=&quot;cpu&quot;, weights_only=True))
+        net.eval()
+        _loaded[model_id] = (net, CHOICES[model_id][1](net))
+    return _loaded[model_id]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>71</td>
+<td>If the model is not in memory yet...</td>
+<td>Lazy loading</td>
+<td>Models load on first use.</td>
+</tr>
+<tr>
+<td>72</td>
+<td>Builds the empty model with <code>build_model</code> (from <code>train.py</code>).</td>
+<td>Reuse</td>
+<td>The architecture is the same code as in training.</td>
+</tr>
+<tr>
+<td>73</td>
+<td>Loads the saved weights onto the CPU, with <code>weights_only=True</code>.</td>
+<td><code>torch.load</code>, <code>load_state_dict</code></td>
+<td><code>weights_only</code> loads only numbers and no code, which is safer for a file that might be replaced.</td>
+</tr>
+<tr>
+<td>74</td>
+<td>Switches to evaluation mode.</td>
+<td><code>model.eval()</code></td>
+<td>BatchNorm and dropout behave as in scoring.</td>
+</tr>
+<tr>
+<td>75</td>
+<td>Stores the model and its Grad-CAM layer.</td>
+<td>Cache</td>
+<td></td>
+</tr>
+<tr>
+<td>76</td>
+<td>Returns both.</td>
+<td>Return value</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>overlay_png</code> (lines 79 to 89)</strong></p>
+<pre><code class="language-python">def overlay_png(heat, size):
+    &quot;&quot;&quot;Grad-CAM map (64 x 64, values 0 to 1) -&gt; transparent PNG with the size of the uploaded image, as a data URL.&quot;&quot;&quot;
+    width, height = size
+    scale = min(1.0, 512 / max(width, height))        # keep the answer small
+    size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    heat = np.asarray(Image.fromarray((heat * 255).astype(np.uint8)).resize(size, Image.BILINEAR)) / 255.0
+    rgba = colormaps[&quot;jet&quot;](heat)                      # (h, w, 4) floats
+    rgba[..., 3] = 0.15 + 0.55 * heat                  # hot areas more opaque
+    buffer = io.BytesIO()
+    Image.fromarray((rgba * 255).astype(np.uint8), &quot;RGBA&quot;).save(buffer, format=&quot;PNG&quot;)
+    return &quot;data:image/png;base64,&quot; + base64.b64encode(buffer.getvalue()).decode()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>81 and 82</td>
+<td>Gets the uploaded width and height, and a scale that makes the longest side at most 512 pixels.</td>
+<td>Scaling</td>
+<td>Keeps the answer small. A huge upload does not make a huge reply.</td>
+</tr>
+<tr>
+<td>83</td>
+<td>Computes the new size, at least 1 pixel.</td>
+<td>Rounding</td>
+<td></td>
+</tr>
+<tr>
+<td>84</td>
+<td>Turns the 64 x 64 heat map into an 8-bit image, resizes it smoothly to the new size, and back to 0 to 1 decimals.</td>
+<td>Bilinear resize</td>
+<td>Smooth edges, so the overlay looks natural.</td>
+</tr>
+<tr>
+<td>85</td>
+<td>Maps each value to a colour: blue for low, red for high.</td>
+<td>Colour map <code>jet</code></td>
+<td></td>
+</tr>
+<tr>
+<td>86</td>
+<td>Sets the transparency: hot areas are more opaque, from 15% to 70%.</td>
+<td>Alpha</td>
+<td>Cold areas stay almost invisible, so the picture shows through.</td>
+</tr>
+<tr>
+<td>87 and 88</td>
+<td>Writes the coloured image as PNG into memory.</td>
+<td>Pillow, RGBA</td>
+<td></td>
+</tr>
+<tr>
+<td>89</td>
+<td>Returns the picture as text: <code>data:image/png;base64,...</code>.</td>
+<td>Data URL</td>
+<td>The web page can show the overlay without a second request.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>app</code> and CORS (lines 92 to 93)</strong></p>
+<pre><code class="language-python">app = FastAPI(title=&quot;Eyes in the Sky&quot;)
+app.add_middleware(CORSMiddleware, allow_origins=[&quot;*&quot;], allow_methods=[&quot;*&quot;], allow_headers=[&quot;*&quot;])   # API.md asks for CORS
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>92</td>
+<td>Creates the web application.</td>
+<td>FastAPI</td>
+<td></td>
+</tr>
+<tr>
+<td>93</td>
+<td>Allows any web page to call the API.</td>
+<td>CORS</td>
+<td>The API document asks for it. For a local demo it is simple. A stricter list of allowed addresses would be safer on a public server.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>api_models</code> (lines 96 to 98)</strong></p>
+<pre><code class="language-python">@app.get(&quot;/api/models&quot;)
+def api_models():
+    return {&quot;models&quot;: [{&quot;id&quot;: i, &quot;label&quot;: CHOICES[i][0]} for i in available()]}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>96</td>
+<td>Route <code>GET /api/models</code>.</td>
+<td>Route</td>
+<td>The web page calls it to fill the model list.</td>
+</tr>
+<tr>
+<td>98</td>
+<td>Returns the available models with their labels, as JSON.</td>
+<td>JSON response</td>
+<td>FastAPI turns the dictionary into JSON.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>api_predict</code> (lines 101 to 129)</strong></p>
+<pre><code class="language-python">@app.post(&quot;/api/predict&quot;)
+def api_predict(image: UploadFile = File(...), model: str = Form(None)):
+    ids = available()
+    if not ids:
+        raise HTTPException(503, &quot;no model weights found in Backend/models/ (see models/README.md)&quot;)
+    model_id = model or ids[0]
+    if model_id not in ids:
+        raise HTTPException(400, f&quot;unknown model {model_id!r}; available: {ids}&quot;)
+    data = image.file.read(MAX_UPLOAD + 1)
+    if len(data) &gt; MAX_UPLOAD:
+        raise HTTPException(413, &quot;image is larger than 15 MB&quot;)
+    try:
+        picture = Image.open(io.BytesIO(data)).convert(&quot;RGB&quot;)
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise HTTPException(400, &quot;the uploaded file is not an image&quot;)
+
+    batch = TRANSFORM(picture).unsqueeze(0)
+    with _lock:
+        net, layer = get_model(model_id)
+        heat, _ = grad_cam(net, batch, layer)
+        with torch.no_grad():
+            probabilities = torch.softmax(net(batch), dim=1)[0]
+    top = probabilities.topk(3)
+    return {
+        &quot;label&quot;: CLASSES[int(top.indices[0])],
+        &quot;confidence&quot;: float(top.values[0]),
+        &quot;top3&quot;: [{&quot;label&quot;: CLASSES[int(i)], &quot;prob&quot;: float(p)} for p, i in zip(top.values, top.indices)],
+        &quot;gradcam&quot;: overlay_png(heat.numpy(), picture.size),
+    }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>100</td>
+<td>Route <code>POST /api/predict</code>.</td>
+<td>Route</td>
+<td>Receives an uploaded picture.</td>
+</tr>
+<tr>
+<td>101</td>
+<td>Arguments: the file (required) and an optional model name.</td>
+<td><code>UploadFile</code>, <code>File(...)</code>, <code>Form(None)</code></td>
+<td>Multipart form upload, the normal way for a browser to send a file.</td>
+</tr>
+<tr>
+<td>102 to 104</td>
+<td>If no weights exist: HTTP 503 (service not ready) with a message.</td>
+<td>HTTP status</td>
+<td></td>
+</tr>
+<tr>
+<td>105 and 106</td>
+<td>Uses the requested model, or the first available one.</td>
+<td>Default</td>
+<td></td>
+</tr>
+<tr>
+<td>107 and 108</td>
+<td>Unknown model name: HTTP 400 (bad request).</td>
+<td>Input check</td>
+<td></td>
+</tr>
+<tr>
+<td>109 and 110</td>
+<td>Reads at most 15 MB + 1 byte. If there is more, HTTP 413 (too large).</td>
+<td>Upload limit</td>
+<td>Reading one byte extra is how the server knows the file is too large, without reading all of it.</td>
+</tr>
+<tr>
+<td>112 to 115</td>
+<td>Opens the picture and converts it to RGB. Any error means HTTP 400.</td>
+<td>Pillow, error handling</td>
+<td><code>DecompressionBombError</code> is for files designed to exhaust memory.</td>
+</tr>
+<tr>
+<td>117</td>
+<td>Resizes to 64 x 64, normalises and adds a batch dimension of 1.</td>
+<td>Preprocessing</td>
+<td>Same steps as in training, so predictions are fair.</td>
+</tr>
+<tr>
+<td>118</td>
+<td>Takes the lock, so only one Grad-CAM runs at a time.</td>
+<td>Thread lock</td>
+<td>See the lock note above.</td>
+</tr>
+<tr>
+<td>119</td>
+<td>Gets the model and its Grad-CAM layer.</td>
+<td>Cache</td>
+<td></td>
+</tr>
+<tr>
+<td>120</td>
+<td>Runs Grad-CAM for the predicted class.</td>
+<td>Grad-CAM</td>
+<td>Needs gradients, so it is not inside <code>no_grad</code>.</td>
+</tr>
+<tr>
+<td>121 and 122</td>
+<td>Scores the image with no gradients, then softmax gives probabilities.</td>
+<td><code>no_grad</code>, softmax</td>
+<td>Probabilities add to 1.</td>
+</tr>
+<tr>
+<td>123</td>
+<td>Takes the three highest probabilities.</td>
+<td>Top-k</td>
+<td></td>
+</tr>
+<tr>
+<td>125</td>
+<td>The top label.</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>126</td>
+<td>Its confidence (probability).</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>127</td>
+<td>The top three labels and probabilities.</td>
+<td>Output</td>
+<td></td>
+</tr>
+<tr>
+<td>128</td>
+<td>The Grad-CAM picture as a data URL.</td>
+<td>Overlay</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>api_metrics</code> (lines 132 to 149)</strong></p>
+<pre><code class="language-python">@app.get(&quot;/api/metrics&quot;)
+def api_metrics():
+    matrix = pd.read_csv(RESULTS_DIR / f&quot;{HEADLINE}_confusion_matrix.csv&quot;, index_col=0)
+    report = pd.read_csv(RESULTS_DIR / f&quot;{HEADLINE}_classification_report.csv&quot;, index_col=0)
+    runs = pd.read_csv(METRICS_CSV)
+    runs = runs[runs[&quot;seed&quot;].isin([0, 1, 2])]          # the 3 seeds every setting has (same as the README table)
+    runs[&quot;fraction&quot;] = runs[&quot;fraction&quot;].round(2)
+
+    def curve(model_name):
+        mean = runs[runs[&quot;model&quot;] == model_name].groupby(&quot;fraction&quot;)[&quot;accuracy&quot;].mean() * 100
+        return [round(float(mean.loc[f]), 2) for f in (0.05, 0.1, 0.25, 0.5, 1.0)]
+
+    return {
+        &quot;accuracy&quot;: round(100 * float(np.trace(matrix.values)) / float(matrix.values.sum()), 2),
+        &quot;macro_f1&quot;: round(100 * float(report.loc[&quot;macro avg&quot;, &quot;f1-score&quot;]), 2),
+        &quot;confusion&quot;: matrix.values.astype(int).tolist(),
+        &quot;efficiency&quot;: {&quot;fractions&quot;: [5, 10, 25, 50, 100], &quot;scratch&quot;: curve(&quot;scratch_cnn&quot;), &quot;transfer&quot;: curve(&quot;mobilenet_v2_full&quot;)},
+    }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>133 and 134</td>
+<td>Reads the confusion matrix and the classification report of the headline model (Rohan's files).</td>
+<td>CSV, index column</td>
+<td>Files from <code>evaluate.py</code>.</td>
+</tr>
+<tr>
+<td>135 and 136</td>
+<td>Reads the results table.</td>
+<td>CSV</td>
+<td></td>
+</tr>
+<tr>
+<td>137</td>
+<td>Keeps seeds 0, 1 and 2 only.</td>
+<td>Filter</td>
+<td>Seeds 3 and 4 are not complete for every setting.</td>
+</tr>
+<tr>
+<td>138</td>
+<td>Rounds the fraction, so 0.1 and 0.10 match.</td>
+<td>Rounding</td>
+<td>Float keys can differ slightly.</td>
+</tr>
+<tr>
+<td>140 to 142</td>
+<td>For one model: mean accuracy per fraction, times 100, for the five fractions.</td>
+<td>Group-by mean</td>
+<td>Gives the three seeds' average.</td>
+</tr>
+<tr>
+<td>145</td>
+<td>Accuracy = sum of the diagonal divided by the sum of all cells, times 100.</td>
+<td>Trace</td>
+<td>That is the definition of accuracy from a confusion matrix.</td>
+</tr>
+<tr>
+<td>146</td>
+<td>Macro-F1 from the "macro avg" row of the report, times 100.</td>
+<td>Macro-F1</td>
+<td>Read from the saved report, not recomputed.</td>
+</tr>
+<tr>
+<td>147</td>
+<td>The full matrix as integers, for the Results tab.</td>
+<td>Confusion matrix</td>
+<td></td>
+</tr>
+<tr>
+<td>148</td>
+<td>The efficiency curves for the scratch CNN and the MobileNetV2 transfer model.</td>
+<td>Data efficiency</td>
+<td>Same numbers as notebook 05.</td>
+</tr>
+</tbody>
+</table>
+<p>Note: the metrics page's headline accuracy (98.27) comes from the seed-0 confusion matrix. It happens to equal the three-seed mean of 98.27 in the notebook.</p>
+<p><strong>Frontend routes (lines 152 to 164)</strong></p>
+<pre><code class="language-python">if FRONTEND.is_dir():
+    @app.get(&quot;/&quot;)
+    def home():
+        return RedirectResponse(&quot;/Eyes_in_the_Sky_landing.html&quot;)
+
+    @app.get(&quot;/app.html&quot;)
+    def classifier_page(request: Request):
+        # The page runs in demo mode (fake results) unless it is opened with ?api=&lt;this server&gt;. Add that for the user.
+        if &quot;api&quot; not in request.query_params:
+            return RedirectResponse(f&quot;/app.html?api={str(request.base_url).rstrip('/')}&quot;)
+        return FileResponse(FRONTEND / &quot;app.html&quot;)
+
+    app.mount(&quot;/&quot;, StaticFiles(directory=FRONTEND), name=&quot;frontend&quot;)        # last: catches every other file
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>152</td>
+<td>Only adds these routes if the <code>frontend/</code> folder exists.</td>
+<td>Conditional routes</td>
+<td>The API still works without the pages.</td>
+</tr>
+<tr>
+<td>153 and 154</td>
+<td>The home address redirects to the landing page.</td>
+<td>Redirect</td>
+<td></td>
+</tr>
+<tr>
+<td>157 to 162</td>
+<td>The classifier page redirects to itself with <code>?api=&lt;this server's address&gt;</code> if that is missing.</td>
+<td>Redirect, query string</td>
+<td>Without it the page runs in demo mode with fake results. Only the address is added, no personal data.</td>
+</tr>
+<tr>
+<td>164</td>
+<td>Serves all other files of the frontend, from the folder root.</td>
+<td>Static files</td>
+<td>Mounted last, so the API routes and the redirects are checked first.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Main block (lines 167 to 169)</strong></p>
+<pre><code class="language-python">if __name__ == &quot;__main__&quot;:
+    import uvicorn
+    uvicorn.run(app, host=&quot;127.0.0.1&quot;, port=8000)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>168 and 169</td>
+<td>Starts the web server on this computer only, port 8000.</td>
+<td>Uvicorn, <code>127.0.0.1</code></td>
+<td>Listening on 127.0.0.1 means other computers on the network cannot connect. A demo with real weights stays local.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes on the server (honest):</strong> <code>api_predict</code> loads a model the first time it is used, so the first upload is slower. The Grad-CAM overlay is coarse because the last block is only 2 x 2 cells on 64 x 64 tiles (see Part E).</p>
+<hr />
+<h3>4.7 <code>src/gradcam_sanity_check.py</code> (Nitin's control experiment)</h3>
+<p>Why this file exists: Rohan's Grad-CAM experiment had no control, so nobody could tell whether the heat map was meaningful. This script checks it. It takes 200 test images (the first 20 of each class in the order of <code>splits.csv</code>), hides 25% of the pixels in three ways, and measures how much the model's confidence falls.</p>
+<pre><code class="language-python">IMAGES_PER_CLASS = 20
+HIDE = 1024                                   # 25% of the 64 x 64 = 4096 pixels
+QUADRANTS = {(0, 0): &quot;top-left&quot;, (0, 1): &quot;top-right&quot;, (1, 0): &quot;bottom-left&quot;, (1, 1): &quot;bottom-right&quot;}
+
+
+def painted(batch, flat_ids):
+    out = batch.clone().reshape(1, 3, -1)
+    out[:, :, flat_ids] = 0.0                 # 0 after normalisation = the average colour of the training data
+    return out.reshape(1, 3, 64, 64)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>24</td>
+<td>20 images per class, so 200 in total.</td>
+<td>Fixed sample</td>
+<td>The rule is fixed, so the study cannot be tuned by choosing images.</td>
+</tr>
+<tr>
+<td>25</td>
+<td>1024 pixels = 25% of 4096.</td>
+<td>Constant</td>
+<td></td>
+</tr>
+<tr>
+<td>26</td>
+<td>Names the four corners of the 2 x 2 grid.</td>
+<td>Dictionary</td>
+<td>Used in Check 1.</td>
+</tr>
+<tr>
+<td>29</td>
+<td><code>painted</code> takes one image and the flat pixel indices to hide.</td>
+<td>Function</td>
+<td></td>
+</tr>
+<tr>
+<td>30</td>
+<td>Copies the image and flattens height and width into one list of 4096 positions per colour.</td>
+<td><code>reshape</code>, <code>clone</code></td>
+<td>The copy keeps the original image untouched.</td>
+</tr>
+<tr>
+<td>31</td>
+<td>Sets the chosen positions to 0 in all three colours.</td>
+<td>Masking</td>
+<td>The comment says 0 is the average colour of the training data. Strictly, it is the ImageNet mean used for normalisation, which is close to but not exactly the EuroSAT average.</td>
+</tr>
+<tr>
+<td>32</td>
+<td>Reshapes back to a 64 x 64 image.</td>
+<td>Reshape</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Note on the comment in line 31: the zero value is the ImageNet average colour after normalisation. That is a close approximation of the EuroSAT average, not the same thing. This is a small inaccuracy in the comment, not in the result.</p>
+<pre><code class="language-python">def main():
+    model, _ = build_model(&quot;mobilenet_v2_full&quot;)
+    state = torch.load(MODELS_DIR / &quot;mobilenet_v2_full_frac1_seed0.pth&quot;, map_location=&quot;cpu&quot;, weights_only=True)
+    model.load_state_dict(state)
+    model.eval()
+
+    data = EuroSATDataset(&quot;test&quot;)
+    generator = torch.Generator().manual_seed(0)
+    rows = []
+    for label in range(10):
+        for index in data.df.index[data.df[&quot;label&quot;] == label][:IMAGES_PER_CLASS]:
+            batch = data[int(index)][0].unsqueeze(0)
+            heat, predicted = grad_cam(model, batch, model.features[-1])
+            h = heat.numpy()
+            quarters = np.array([[h[:32, :32].mean(), h[:32, 32:].mean()], [h[32:, :32].mean(), h[32:, 32:].mean()]])
+            flat = heat.flatten()
+            top, left = torch.randint(0, 33, (2,), generator=generator).tolist()
+            square = ((torch.arange(32)[:, None] + top) * 64 + (torch.arange(32)[None, :] + left)).flatten()
+            patches = {&quot;hottest&quot;: flat.topk(HIDE).indices, &quot;coldest&quot;: (-flat).topk(HIDE).indices, &quot;random_square&quot;: square}
+            with torch.no_grad():
+                before = torch.softmax(model(batch), dim=1)[0, predicted].item()
+                row = {&quot;path&quot;: data.df.loc[index, &quot;path&quot;], &quot;class_name&quot;: data.df.loc[index, &quot;class_name&quot;],
+                       &quot;hottest_quadrant&quot;: QUADRANTS[np.unravel_index(quarters.argmax(), (2, 2))]}
+                for name, ids in patches.items():
+                    probs = torch.softmax(model(painted(batch, ids)), dim=1)[0]
+                    row[f&quot;drop_{name}&quot;] = before - probs[predicted].item()
+                    row[f&quot;changed_{name}&quot;] = int(probs.argmax().item() != predicted)
+            rows.append(row)
+
+    table = pd.DataFrame(rows)
+    table.to_csv(RESULTS_DIR / &quot;gradcam_sanity_check.csv&quot;, index=False)
+
+    n = len(table)
+    print(f&quot;Images tested: {n}&quot;)
+    print(&quot;Check 1 - hottest quadrant of the Grad-CAM map:&quot;)
+    for name in QUADRANTS.values():
+        count = int((table[&quot;hottest_quadrant&quot;] == name).sum())
+        print(f&quot;  {name:13s} {count:3d}  ({count / n:.0%})&quot;)
+    print(&quot;Check 2 - hide 25% of the pixels:&quot;)
+    for name in (&quot;hottest&quot;, &quot;coldest&quot;, &quot;random_square&quot;):
+        print(f&quot;  {name:14s} mean confidence drop {table[f'drop_{name}'].mean():.3f} | prediction changed for {int(table[f'changed_{name}'].sum())} of {n}&quot;)
+    hot, cold = table[&quot;drop_hottest&quot;], table[&quot;drop_coldest&quot;]
+    print(f&quot;  hottest hurt MORE than coldest for {int((hot &gt; cold).sum())} images, LESS for {int((hot &lt; cold).sum())}&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Lines</th>
+<th>What it does (simple words)</th>
+<th>Concept</th>
+<th>Why we did it this way (and what else could be used)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>36 to 39</td>
+<td>Builds the MobileNetV2 model, loads its saved full-data weights on the CPU, and switches to evaluation mode.</td>
+<td>Checkpoint loading</td>
+<td>The check uses the saved model, not a retrained one.</td>
+</tr>
+<tr>
+<td>41</td>
+<td>Loads the test images with the normal test transform.</td>
+<td>Test set</td>
+<td>Used for analysis only. Nothing is trained.</td>
+</tr>
+<tr>
+<td>42</td>
+<td>A seeded generator, so the random square positions repeat.</td>
+<td>Seed</td>
+<td></td>
+</tr>
+<tr>
+<td>44 and 45</td>
+<td>Goes through the classes 0 to 9 and takes the first 20 test images of each.</td>
+<td>Fixed sample</td>
+<td>Same rule each run.</td>
+</tr>
+<tr>
+<td>46</td>
+<td>Gets one image as a batch of 1.</td>
+<td>Batch of one</td>
+<td>Grad-CAM and the model expect a batch dimension.</td>
+</tr>
+<tr>
+<td>47</td>
+<td>Runs Grad-CAM on the last block of MobileNetV2 and gets the heat map and the predicted class.</td>
+<td>Grad-CAM</td>
+<td><code>model.features[-1]</code> is the last block.</td>
+</tr>
+<tr>
+<td>49</td>
+<td>Average heat in each of the four quarters of the 64 x 64 map.</td>
+<td>Quadrants</td>
+<td>Check 1.</td>
+</tr>
+<tr>
+<td>50</td>
+<td>Flattens the heat map to 4096 values.</td>
+<td>Flatten</td>
+<td></td>
+</tr>
+<tr>
+<td>51 and 52</td>
+<td>Picks a random top-left corner from 0 to 32 and builds the 32 x 32 square of pixel positions.</td>
+<td>Random square</td>
+<td>The square is the same size as the solid hide, so only the shape is random.</td>
+</tr>
+<tr>
+<td>53</td>
+<td>Three patches: the 1024 hottest pixels, the 1024 coldest pixels, and the random square (1024 pixels).</td>
+<td>Top-k</td>
+<td>Same size in all three, which makes the comparison fair.</td>
+</tr>
+<tr>
+<td>54 and 55</td>
+<td>Without gradients, reads the original probability of the predicted class.</td>
+<td><code>no_grad</code>, softmax</td>
+<td></td>
+</tr>
+<tr>
+<td>56 and 57</td>
+<td>Records the image path, the class and the hottest quadrant.</td>
+<td>Record</td>
+<td></td>
+</tr>
+<tr>
+<td>58 to 61</td>
+<td>For each patch: hides it, reads the new probability, records the fall in confidence and whether the predicted class changed.</td>
+<td>Deletion test</td>
+<td>A bigger fall means the hidden area mattered more.</td>
+</tr>
+<tr>
+<td>62</td>
+<td>Adds the row.</td>
+<td>Accumulate</td>
+<td></td>
+</tr>
+<tr>
+<td>65 and 66</td>
+<td>Saves one row per image to <code>results/gradcam_sanity_check.csv</code>.</td>
+<td>Output file</td>
+<td></td>
+</tr>
+<tr>
+<td>68 to 72</td>
+<td>Prints the count of quadrants, with percentages.</td>
+<td>Output</td>
+<td>Gives 160 bottom-right, 36 top-right, 4 bottom-left and 0 top-left.</td>
+</tr>
+<tr>
+<td>73 to 75</td>
+<td>Prints the mean fall in confidence for each patch, and how many predictions changed.</td>
+<td>Output</td>
+<td>Gives 0.064 (hottest), 0.061 (coldest), 0.089 (random square).</td>
+</tr>
+<tr>
+<td>76 and 77</td>
+<td>Counts how often the hottest hide hurt more than the coldest hide.</td>
+<td>Paired comparison</td>
+<td></td>
+</tr>
+<tr>
+<td>80 and 81</td>
+<td>Runs <code>main</code> only when started directly.</td>
+<td><code>__main__</code> guard</td>
+<td>Run it with <code>python -m src.gradcam_sanity_check</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The numbers in this section were checked against the saved <code>results/gradcam_sanity_check.csv</code> (200 rows): the quadrant counts and the three mean drops match the log.</p>
+<hr />
+<h3>4.8 <code>.gitignore</code> and <code>requirements.txt</code> (briefly)</h3>
+<p><strong><code>.gitignore</code></strong> tells git which files never to commit. Important lines: <code>.venv/</code> (the virtual environment), <code>__pycache__/</code>, <code>data/*</code> (the dataset, except the README and <code>splits.csv</code>), <code>models/*</code> (weights, except the README), <code>*.pth</code> and <code>*.pt</code> (any weight file), <code>checkpoints/</code>, and <code>.october/</code> and <code>.claude/</code> (local tool settings). Keeping weights and data out of git keeps the repository small. The price is that every person must download the weights separately (see <code>models/README.md</code>).</p>
+<p><strong><code>requirements.txt</code></strong> lists the pinned versions of the other packages (numpy, pandas, matplotlib, scikit-learn, pillow, fastapi, uvicorn, python-multipart, notebook, ipykernel). PyTorch and torchvision are not in this file, because the README installs them with a special command for CPU or CUDA. Pinning means that everybody gets the same version, so results do not change because a package was updated.</p>
+<hr />
+<h2>5. How it works end to end: <code>train('mobilenet_v2_full', 1.0, 0)</code></h2>
+<p>Assume the person has run <code>check_setup.py</code>, the data is in <code>data/eurosat</code>, and the GPU is available.</p>
+<ol>
+<li><strong>The call.</strong> <code>train</code> receives <code>model_name="mobilenet_v2_full"</code>, <code>fraction=1.0</code>, <code>seed=0</code>. It uses the defaults: <code>epochs=20</code>, <code>metrics_csv=results/metrics.csv</code>, <code>save_weights=None</code>.</li>
+<li><strong>Check the fraction.</strong> <code>0 &lt; 1.0 &lt;= 1</code> is True, so no error.</li>
+<li><strong>Pick the device.</strong> <code>get_device()</code> returns <code>"cuda"</code>.</li>
+<li><strong>Set the seed.</strong> <code>set_seed(0)</code> seeds Python, numpy and PyTorch, and sets cuDNN to deterministic. From here on, every random step repeats.</li>
+<li><strong>Load the images (first call in this session only).</strong> <code>_load_all_images("cuda")</code> reads <code>splits.csv</code>, opens all 27,000 pictures, stacks them into one <code>uint8</code> block of shape (27000, 3, 64, 64), and puts it on the GPU with the labels and the path-to-row lookup. It prints the "about 20 seconds" message. Later calls in the same session return the cached block immediately.</li>
+<li><strong>Choose the rows.</strong> <code>_rows</code> asks <code>get_loader</code> for the train split with <code>fraction=1.0</code> (so all 18,900 rows; no subset), and for validation and test (4,050 each). It turns the paths into row numbers on the GPU.</li>
+<li><strong>Build the model.</strong> <code>build_model("mobilenet_v2_full")</code> finds <code>("mobilenet_v2", False)</code> in <code>TRANSFER</code>. Because <code>freeze</code> is False, it calls <code>models.build_transfer_model("mobilenet_v2", False)</code>. That loads ImageNet weights (from the torch cache, or downloaded the first time), leaves every layer trainable, and replaces the 1000-class output with a new 10-class linear layer. The learning rate is <code>1e-4</code>.</li>
+<li><strong>Prepare the training.</strong> The model moves to the GPU. Loss is <code>CrossEntropyLoss</code>. Adam gets every parameter (all have <code>requires_grad</code> True) with <code>lr=1e-4</code> and <code>foreach=False</code>. A seeded generator is made for the shuffle.</li>
+<li><strong>Epoch 1.</strong> <code>model.train()</code>. The training rows are shuffled with the seeded generator. The rows are cut into 296 batches of 64 (the last one has 20 images). For each batch: <code>_prepare</code> (bytes to 0 to 1, random 90-degree turns and flips per image, normalisation), <code>zero_grad</code>, forward pass, loss, <code>backward</code>, <code>step</code>, and the running totals are updated on the GPU.</li>
+<li><strong>Validate.</strong> <code>_score</code> puts the model in <code>eval()</code>, scores the 4,050 validation images in groups of 256 without gradients, and returns loss and accuracy. The four history numbers are stored, and one line is printed with the epoch number, losses, accuracies and seconds.</li>
+<li><strong>Best so far?</strong> If the validation accuracy is above the best so far, the epoch number and a CPU copy of all weights are kept.</li>
+<li><strong>Repeat steps 9 to 11</strong> for epochs 2 to 20. Each epoch reshuffles the training rows, and the seeded generator makes the shuffles repeatable.</li>
+<li><strong>Restore the best.</strong> After epoch 20, <code>load_state_dict(best_weights)</code> puts back the weights of the best validation epoch (not necessarily epoch 20).</li>
+<li><strong>Test once.</strong> <code>_score</code> scores the 4,050 test images with those weights. Accuracy comes from the scores, and macro-F1 comes from <code>sklearn.metrics.f1_score(..., average="macro")</code> on the predicted and true labels.</li>
+<li><strong>Write the row.</strong> A dictionary <code>{model, fraction, seed, accuracy, macro_f1}</code> is made. <code>_save_row</code> reads <code>results/metrics.csv</code>, removes any old row with the same model, fraction and seed, appends the new row, and writes the file with <code>\n</code> line endings.</li>
+<li><strong>Save the weights.</strong> <code>save_weights</code> is None, and <code>fraction == 1.0</code>, so it is True. <code>models/</code> is created if needed, and the best state dictionary is saved as <code>models/mobilenet_v2_full_frac1_seed0.pth</code>. The folder is ignored by git.</li>
+<li><strong>Print and return.</strong> The test line prints the best epoch, accuracy, macro-F1, minutes and seconds per epoch. The function returns the row plus <code>best_epoch</code>, <code>val_accuracy</code>, <code>seconds_per_epoch</code> and the <code>history</code> dictionary.</li>
+</ol>
+<p><strong>What is written to disk:</strong>
+- <code>results/metrics.csv</code>: one row changed or added (accuracy and macro-F1 are decimals, for example 0.9827).
+- <code>models/mobilenet_v2_full_frac1_seed0.pth</code>: the best weights only.
+- The torch cache (the first time only): the ImageNet weights downloaded by torchvision.
+- Nothing else. The per-epoch history is returned in memory, not written to a file. The best epoch is printed and returned, but not saved in the CSV.</p>
+<hr />
+<h2>6. Why these choices</h2>
+<ul>
+<li><strong>One shared <code>train()</code>.</strong> Every model is trained with the same loop, the same optimiser setup, the same split, the same scoring and the same row format. Differences in the results then come from the models, not from the code. This is the brief's main requirement for Part D.</li>
+<li><strong>A fixed seed.</strong> The seed makes the starting weights, the batch order, the augmentation and the subset repeatable. A teammate can run the same command and get the same numbers (up to tiny differences between machines). The seed is also the way to compare two settings fairly.</li>
+<li><strong>Several seeds (0, 1, 2).</strong> One run can be lucky or unlucky. With three seeds we can show the mean and the spread. Seeds 0 to 2 were run on Nitin's GPU laptop. Seed 3 is still missing, and seed 4 exists only for three scratch-CNN settings (from Rohan's CPU script).</li>
+<li><strong>Validation chooses the epoch.</strong> The validation set is a practice exam for decisions. Choosing the best epoch on validation avoids tuning the model to the test set. The test score stays an honest estimate.</li>
+<li><strong>Test once.</strong> Scoring the test set after training, once per run and never for a decision, means its numbers are not inflated.</li>
+<li><strong>Macro-F1 as well as accuracy.</strong> The classes have different sizes. Macro-F1 gives each class the same weight, so a weak small class cannot hide behind a good accuracy.</li>
+<li><strong>Keep the data in memory.</strong> Decoding JPEGs in every epoch was too slow (about 45 to 90 seconds per epoch on a CPU laptop). In memory, the same maths runs in about 4.6 seconds per epoch on the RTX 3050. We checked that the pixels match the original loader.</li>
+<li><strong>Augmentation on the GPU.</strong> Rotations and flips are exact for satellite tiles. Doing them on the GPU in batches is fast.</li>
+<li><strong>A log x-axis.</strong> The training sizes grow by about two times at each step (945, 1,890, 4,725, 9,450, 18,900). On a log axis the steps are evenly spaced, and the small sizes are not squeezed together.</li>
+<li><strong>Mean ± sample SD with <code>ddof=1</code>.</strong> <code>ddof=1</code> is the correct SD for a small sample of seeds. The error bars show how much the seeds disagree.</li>
+<li><strong>Replace rows instead of adding them.</strong> A rerun of the same run must not duplicate the row. This keeps the table clean and makes the notebook safe to restart.</li>
+<li><strong>Only the full-data weights are saved.</strong> The website and the evaluation need full-data models. Saving every small run would fill the disk.</li>
+<li><strong>Lower learning rate for full fine-tuning.</strong> Pretrained weights are already good, so a big step could damage them. <code>1e-4</code> changes them gently.</li>
+</ul>
+<p><strong>Points to be careful about in the viva:</strong></p>
+<ul>
+<li>The 100% scratch CNN rows came from Tejash's own notebook helper, not from <code>train()</code>. According to the log, <code>train()</code> reproduced his mean (92.79% against 92.72%) with seeds 0 to 2.</li>
+<li>Frozen transfer models still update BatchNorm averages (see the list above).</li>
+<li>All sizes get the same budget of up to 20 epochs. Small sets get fewer updates and may be under-trained.</li>
+<li>The study uses only three seeds for the main table. Seed 4 rows exist for the scratch CNN at 5%, 10% and 25% (from Rohan's own CPU script, not <code>train()</code>), but they are not in the study table.</li>
+<li>Grad-CAM on 64 x 64 tiles is coarse. The control experiment shows that hiding the hottest and the coldest quarter cost almost the same confidence (0.064 and 0.061), so the heat map is a picture, not proof.</li>
+</ul>
+<hr />
+<h2>7. Numbers you must know</h2>
+<p>All numbers come from <code>results/metrics.csv</code> (48 rows) unless marked. Accuracy in the CSV is a decimal. The table shows percent, mean over seeds 0, 1 and 2, with the sample SD (<code>ddof=1</code>). The notebook <code>05_data_efficiency.ipynb</code> computes these.</p>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Number</th>
+<th>Where it comes from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MobileNetV2, fully fine-tuned, all data (18,900 images)</td>
+<td><strong>98.27 ± 0.12</strong> % test accuracy</td>
+<td><code>metrics.csv</code>, <code>model = mobilenet_v2_full</code>, <code>fraction = 1.0</code>, seeds 0, 1, 2 (0.98272, 0.98148, 0.98395). Also in the root README.</td>
+</tr>
+<tr>
+<td>Scratch CNN (our own), all data</td>
+<td><strong>92.72 ± 0.45</strong> %</td>
+<td><code>metrics.csv</code>, <code>model = scratch_cnn</code>, <code>fraction = 1.0</code>, seeds 0, 1, 2 (0.93136, 0.92765, 0.92247).</td>
+</tr>
+<tr>
+<td>MobileNetV2, 5% (945 images)</td>
+<td><strong>93.69 ± 0.20</strong> %</td>
+<td><code>metrics.csv</code>, <code>mobilenet_v2_full</code>, <code>fraction = 0.05</code>, seeds 0, 1, 2</td>
+</tr>
+<tr>
+<td>Scratch CNN, 5% (945 images)</td>
+<td>77.07 ± 0.74 %</td>
+<td><code>metrics.csv</code>, <code>scratch_cnn</code>, <code>fraction = 0.05</code>, seeds 0, 1, 2</td>
+</tr>
+<tr>
+<td>Gap at 5%</td>
+<td>16.62 points</td>
+<td>Notebook 05 gap table (MobileNetV2 minus scratch)</td>
+</tr>
+<tr>
+<td>Gap at 100%</td>
+<td>5.56 points</td>
+<td>Notebook 05 gap table</td>
+</tr>
+<tr>
+<td>Data-efficiency table, MobileNetV2 (945, 1,890, 4,725, 9,450, 18,900)</td>
+<td>93.69, 96.15, 97.26, 97.76, 98.27 %</td>
+<td><code>metrics.csv</code>, notebook 05 table</td>
+</tr>
+<tr>
+<td>Data-efficiency table, scratch CNN (same sizes)</td>
+<td>77.07, 80.98, 84.96, 89.45, 92.72 %</td>
+<td><code>metrics.csv</code>, notebook 05 table</td>
+</tr>
+<tr>
+<td>Macro-F1, MobileNetV2 all data</td>
+<td>98.19 ± 0.13 %</td>
+<td>Notebook 05 table (from the macro-F1 column)</td>
+</tr>
+<tr>
+<td>Macro-F1, scratch CNN all data</td>
+<td>92.48 ± 0.51 %</td>
+<td>Notebook 05 table</td>
+</tr>
+<tr>
+<td>Speed on RTX 3050</td>
+<td>about 4.6 s per epoch</td>
+<td>Log (section 2), not printed by the code</td>
+</tr>
+<tr>
+<td>Study run time</td>
+<td>24 runs in about 20 minutes</td>
+<td>Notebook 05 output (sweep time 20.0 minutes)</td>
+</tr>
+<tr>
+<td>Total rows in <code>metrics.csv</code></td>
+<td>48</td>
+<td>Count of the file</td>
+</tr>
+<tr>
+<td>Grad-CAM control: mean fall in confidence, hottest 25% hidden</td>
+<td>0.064</td>
+<td><code>results/gradcam_sanity_check.csv</code> and the script output</td>
+</tr>
+<tr>
+<td>Grad-CAM control: coldest 25% hidden</td>
+<td>0.061</td>
+<td>Same</td>
+</tr>
+<tr>
+<td>Grad-CAM control: random 32 x 32 square hidden</td>
+<td>0.089</td>
+<td>Same</td>
+</tr>
+<tr>
+<td>Grad-CAM control: hottest quadrant bottom-right / top-right / bottom-left / top-left</td>
+<td>160 / 36 / 4 / 0 of 200</td>
+<td>Same file, column <code>hottest_quadrant</code></td>
+</tr>
+</tbody>
+</table>
+<p>Notes on the numbers:</p>
+<ul>
+<li>The 100% scratch CNN rows come from Tejash's own notebook helper (Part B). The 100% MobileNetV2 row comes from Rachana's Part C work. They are not re-run here. The notebook uses them as they are.</li>
+<li>Seeds 0, 1 and 2 are used for all tables and for the website's efficiency curves.</li>
+<li>The 5% to 50% rows of the study were run with <code>train()</code> on Nitin's RTX 3050. Seed 4 rows (scratch CNN at 5%, 10%, 25%) exist from a CPU script and are not in the three-seed tables.</li>
+<li>Two decimals are rounded. For example, 98.27 comes from 0.982716 in the file.</li>
+</ul></body></html>

@@ -1,22 +1,26 @@
-"""check_setup.py - laptop check for the Group 5 EuroSAT project (owner: Nitin, part D).
+"""check_setup.py - laptop and environment verification script.
+
+Owner: Nitin (Part D)
+
+Why we use this file:
+Setting up deep learning environments across different student laptops often leads to subtle bugs
+(wrong Python versions, CPU-only PyTorch instead of CUDA GPU, missing libraries, or outdated drivers).
+This script runs a comprehensive pre-flight check on the student's laptop to confirm everything
+is ready for training and reproducing project experiments.
+
+What it checks, in order:
+  1. Python version (ensures everyone uses 3.12)
+  2. Required packages (verifies all libraries from requirements.txt are installed)
+  3. Git user configuration (checks that commits are tied to the member's GitHub email)
+  4. NVIDIA GPU and driver version (via nvidia-smi)
+  5. PyTorch CUDA capability (ensures PyTorch can actually run computations on the GPU)
+  6. Free disk space (ensures enough storage for the EuroSAT dataset and model checkpoints)
+  7. Performance benchmark speed test (computes estimated time per epoch for ResNet-18)
+  8. Optional: automated download of EuroSAT dataset and pretrained weights (--download flag)
 
 Usage:
-  python check_setup.py --name Tejash              (checks + speed test)
-  python check_setup.py --name Tejash --download   (also downloads EuroSAT and pretrained weights)
-
-Checks, in order:
-  1. Python version
-  2. Installed packages
-  3. Git and your git email
-  4. NVIDIA GPU (nvidia-smi)
-  5. PyTorch and CUDA
-  6. Free disk space
-  7. Speed test (the "project score")
-  8. Optional: download EuroSAT and pretrained weights (--download)
-
-Each check prints OK / WARN / FAIL with a one-line fix.
-Writes docs/setup/<name>.md and prints one line for the team chat.
-Exit code is 1 if any check FAILed, else 0.
+  python check_setup.py --name Nitin
+  python check_setup.py --name Nitin --download
 """
 
 import argparse
@@ -28,19 +32,29 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-RESULTS = []  # each entry: (check, status, detail, fix)
-INFO = {}     # values used for the summary line
 
+# Global list of test outcomes: each item is a tuple (check_name, status, detail_message, recommended_fix)
+RESULTS = []
+
+# Dictionary storing key summary stats (Python version, GPU specs, epoch speed, etc.)
+INFO = {}
+
+# Required dependencies that every team member must have installed in their virtual environment
 PACKAGES = [
     "torch", "torchvision", "numpy", "pandas", "matplotlib", "scikit-learn",
     "pillow", "fastapi", "uvicorn", "python-multipart", "notebook", "ipykernel",
 ]
-TRAIN_IMAGES = 18900  # 70% of 27,000
+
+# Total number of training images in our 70% split (70% of 27,000 EuroSAT images)
+TRAIN_IMAGES = 18900
 BATCH = 64
 
 
 def record(check, status, detail, fix=""):
-    """Store one result and print it."""
+    """Store one check result in our log and print a clean formatted line to the terminal.
+
+    status: 'OK' (all good), 'WARN' (acceptable but not ideal), or 'FAIL' (blocks training).
+    """
     RESULTS.append((check, status, detail, fix))
     line = f"  [{status}] {check}: {detail}"
     if fix and status != "OK":
@@ -49,17 +63,25 @@ def record(check, status, detail, fix=""):
 
 
 def run_check(title, func):
-    """Run one check. If it crashes, record FAIL and keep going."""
+    """Run an individual check function inside a safety try/except wrapper.
+
+    Why?
+    If one check crashes unexpectedly (e.g. nvidia-smi command not found),
+    we still want the rest of the checklist to run and give a full report.
+    """
     print(f"\n== {title}")
     try:
         func()
-    except Exception as err:  # never stop the other checks
+    except Exception as err:
         record(title, "FAIL", f"unexpected error: {type(err).__name__}: {err}",
                "send this line to Nitin")
 
 
 def run_cmd(args, timeout=10):
-    """Run a command and return its text output, or '' if it fails."""
+    """Execute a system shell command safely and return its standard output string.
+
+    Returns an empty string if the command does not exist or fails.
+    """
     try:
         out = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return out.stdout.strip() if out.returncode == 0 else ""
@@ -67,9 +89,15 @@ def run_cmd(args, timeout=10):
         return ""
 
 
-# ---------- checks ----------
+# ---------- Individual System Checks ----------
 
 def check_python():
+    """Verify that Python 3.12 is being used.
+
+    Why?
+    Python 3.12 is the agreed team standard. Different Python versions can have
+    incompatible dependency wheels or slightly different random seeding behavior.
+    """
     v = sys.version_info
     ver = f"{v.major}.{v.minor}.{v.micro}"
     INFO["python"] = ver
@@ -84,6 +112,7 @@ def check_python():
 
 
 def check_packages():
+    """Verify that all required Python packages are installed in the active environment."""
     for name in PACKAGES:
         try:
             record(name, "OK", importlib.metadata.version(name))
@@ -96,11 +125,18 @@ def check_packages():
 
 
 def check_git():
+    """Check that Git is installed and that user name and email are configured.
+
+    Why?
+    If git user.email is missing or doesn't match the student's GitHub email,
+    their commits won't be credited to their profile on the project repository.
+    """
     version = run_cmd(["git", "--version"])
     if not version:
         record("Git", "FAIL", "git not found", "install Git from git-scm.com, then reopen PowerShell")
         return
     record("Git", "OK", version)
+
     name = run_cmd(["git", "config", "user.name"])
     email = run_cmd(["git", "config", "user.email"])
     record("Git user.name", "OK" if name else "WARN", name or "not set",
@@ -115,8 +151,9 @@ def check_git():
 
 
 def check_nvidia():
-    # nvidia-smi is normally on PATH; on some laptops it is only in the NVIDIA folder
+    """Query the operating system for an NVIDIA graphics card using nvidia-smi."""
     out = ""
+    # Check default PATH, and also standard Windows installation directory as fallback
     for exe in ["nvidia-smi", r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"]:
         out = run_cmd([exe, "--query-gpu=name,driver_version,memory.total",
                        "--format=csv,noheader"])
@@ -131,23 +168,32 @@ def check_nvidia():
 
 
 def check_torch():
+    """Verify PyTorch is installed with GPU (CUDA) support rather than CPU-only.
+
+    Why?
+    Training on CPU takes ~10 minutes per epoch, while GPU takes ~1-2 seconds per epoch.
+    A common student mistake on Windows is running 'pip install torch' which defaults to CPU.
+    """
     try:
         import torch
     except ImportError:
         record("PyTorch", "FAIL", "torch is not installed",
                "install PyTorch with the command in README, Setup step 4")
         return
+
     cuda_build = torch.version.cuda or "none (CPU-only build)"
     cuda_ok = torch.cuda.is_available()
     INFO["torch"] = f"{torch.__version__} + CUDA {cuda_build}"
     record("PyTorch", "OK", f"version {torch.__version__}, CUDA build {cuda_build}, "
                             f"cuda available = {cuda_ok}")
+
     if cuda_ok:
         name = torch.cuda.get_device_name(0)
         vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
         INFO["gpu"] = f"{name}, {vram:.1f} GB VRAM"
         record("PyTorch GPU", "OK", INFO["gpu"])
     elif "gpu_line" in INFO:
+        # Hardware has an NVIDIA card, but PyTorch was installed without CUDA support
         INFO["gpu"] = "CPU only (CPU-only PyTorch installed)"
         record("PyTorch GPU", "FAIL", "nvidia-smi found a GPU but PyTorch cannot use it",
                "you installed the CPU-only PyTorch; reinstall using the CUDA command from "
@@ -159,6 +205,7 @@ def check_torch():
 
 
 def check_disk():
+    """Verify there is at least 5 GB of free hard drive space for data and models."""
     free_gb = shutil.disk_usage(ROOT).free / 1024 ** 3
     if free_gb < 5:
         record("Disk space", "WARN", f"only {free_gb:.1f} GB free",
@@ -168,7 +215,7 @@ def check_disk():
 
 
 def make_small_cnn(torch):
-    """Small scratch CNN: 3 blocks of Conv-BatchNorm-ReLU-MaxPool, then a Linear to 10 classes."""
+    """Helper that creates a quick lightweight 3-block CNN for the speed test."""
     nn = torch.nn
 
     def block(cin, cout):
@@ -180,17 +227,19 @@ def make_small_cnn(torch):
 
 
 def sync(torch, device):
-    """GPU runs are asynchronous: wait for them to finish before reading the clock."""
+    """Wait for all asynchronous GPU operations to finish before taking a clock reading."""
     if device.type == "cuda":
         torch.cuda.synchronize()
 
 
 def benchmark(torch, model, device, steps, warmup=5):
-    """Train on random 64x64 data and return images per second."""
+    """Simulate a short training loop on synthetic random data and measure images processed per second."""
     model = model.to(device)
     model.train()
     opt = torch.optim.Adam(model.parameters())
     loss_fn = torch.nn.CrossEntropyLoss()
+
+    # Create synthetic batch on the selected device
     x = torch.rand(BATCH, 3, 64, 64, device=device)
     y = torch.randint(0, 10, (BATCH,), device=device)
 
@@ -199,17 +248,22 @@ def benchmark(torch, model, device, steps, warmup=5):
         loss_fn(model(x), y).backward()
         opt.step()
 
+    # Run warmup iterations to allow GPU kernels and caches to initialize
     for _ in range(warmup):
         one_step()
     sync(torch, device)
+
+    # Timed benchmark iterations
     start = time.perf_counter()
     for _ in range(steps):
         one_step()
     sync(torch, device)
+
     return steps * BATCH / (time.perf_counter() - start)
 
 
 def check_speed():
+    """Benchmark the laptop's compute hardware to estimate how long real training runs will take."""
     try:
         import torch
         import torchvision
@@ -217,13 +271,16 @@ def check_speed():
         record("Speed test", "FAIL", "torch or torchvision missing, cannot test",
                "install PyTorch first (README, Setup step 4)")
         return
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     steps = 30 if device.type == "cuda" else 5
     print(f"  running on {device}: {steps} timed steps per model, batch {BATCH}, random data")
+
     models = {
         "Small CNN": lambda: make_small_cnn(torch),
         "ResNet-18": lambda: torchvision.models.resnet18(weights=None, num_classes=10),
     }
+
     for name, build in models.items():
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
@@ -233,25 +290,31 @@ def check_speed():
             torch.cuda.empty_cache()
             record(f"Speed {name}", "WARN", f"batch {BATCH} does not fit, use 32",
                    "set the batch size to 32 in train.py")
-            if name == "ResNet-18":  # no timing possible, so give the cautious verdict
+            if name == "ResNet-18":
                 INFO["resnet_sec"] = "out of memory"
                 verdict(float("inf"))
             continue
+
         sec_epoch = TRAIN_IMAGES / ips
         detail = (f"{ips:.0f} images/s, {sec_epoch:.0f} s per epoch, "
                   f"{sec_epoch * 20 / 60:.1f} min for 20 epochs")
+
         if device.type == "cuda":
             peak = torch.cuda.max_memory_allocated() / 1024 ** 3
             detail += f", peak VRAM {peak:.2f} GB"
+
         record(f"Speed {name}", "OK", detail)
+
+        # Use ResNet-18 speed as the benchmark baseline for team role recommendation
         if name == "ResNet-18":
             INFO["resnet_sec"] = f"{sec_epoch:.0f}"
             verdict(sec_epoch)
+
     print("  NOTE: these are lower bounds, because real runs also load and augment images.")
 
 
 def verdict(sec_epoch):
-    """Turn ResNet-18 seconds per epoch into a plain advice line."""
+    """Provide practical role recommendation for the student based on their hardware speed."""
     if sec_epoch <= 60:
         text = "GPU-ready: can own a training part (B, C or D)"
     elif sec_epoch <= 300:
@@ -263,11 +326,14 @@ def verdict(sec_epoch):
 
 
 def check_download():
+    """Download the official EuroSAT dataset and pretrained ImageNet model weights."""
     from torchvision import datasets, models
     from torchvision.models import MobileNet_V2_Weights, ResNet18_Weights
 
     data_dir = ROOT / "data"
     data_dir.mkdir(exist_ok=True)
+
+    # Download EuroSAT images (approx 150 MB)
     try:
         ds = datasets.EuroSAT(root=str(data_dir), download=True)
         n, k = len(ds), len(ds.classes)
@@ -277,6 +343,8 @@ def check_download():
     except Exception as err:
         record("EuroSAT dataset", "FAIL", f"download failed: {err}",
                "check your internet connection and run --download again")
+
+    # Pre-download ImageNet weights for transfer learning models into PyTorch's local cache
     for label, build in [
         ("ResNet-18 weights", lambda: models.resnet18(weights=ResNet18_Weights.DEFAULT)),
         ("MobileNetV2 weights", lambda: models.mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT)),
@@ -289,10 +357,10 @@ def check_download():
                    "check your internet connection and run --download again")
 
 
-# ---------- summary ----------
+# ---------- Report Generation and Summary ----------
 
 def save_summary(name, line):
-    """Write docs/setup/<name>.md, overwriting it if it exists."""
+    """Save the setup report as a Markdown document in docs/setup/<name>.md."""
     folder = ROOT / "docs" / "setup"
     folder.mkdir(parents=True, exist_ok=True)
     safe = "".join(c for c in name.lower() if c.isalnum())
@@ -305,13 +373,17 @@ def save_summary(name, line):
 
 
 def main():
+    """Command-line interface entry point."""
     parser = argparse.ArgumentParser(description="Check this laptop for the EuroSAT project.")
-    parser.add_argument("--name", required=True, help="your first name, e.g. Tejash")
+    parser.add_argument("--name", required=True, help="your first name, e.g. Nitin")
     parser.add_argument("--download", action="store_true",
                         help="also download EuroSAT and the pretrained weights")
     args = parser.parse_args()
-    sys.stdout.reconfigure(errors="replace")  # an odd character in an error must not crash the printing
 
+    # Configure stdout to handle unusual characters gracefully on Windows command lines
+    sys.stdout.reconfigure(errors="replace")
+
+    # Run the full test checklist
     run_check("1. Python", check_python)
     run_check("2. Packages", check_packages)
     run_check("3. Git", check_git)
@@ -322,18 +394,22 @@ def main():
     if args.download:
         run_check("8. Download data and weights", check_download)
 
+    # Print summary table
     print("\n========== SUMMARY ==========")
     for check, status, detail, _ in RESULTS:
         print(f"{status:5} {check:24} {detail}")
 
+    # Build the single copy-paste line for the group communication channel
     line = (f"{args.name} | Python {INFO.get('python', '?')} | torch {INFO.get('torch', '?')} | "
             f"{INFO.get('gpu', '?')} | ResNet-18 {INFO.get('resnet_sec', '?')} s/epoch | "
             f"{INFO.get('verdict', '?')}")
     print("\nPaste this line in the team chat:")
     print(line)
+
     path = save_summary(args.name, line)
     print(f"\nSaved to {path}")
 
+    # Exit with error code 1 if any check failed, so CI/CD or setup scripts can detect problems
     failed = any(status == "FAIL" for _, status, _, _ in RESULTS)
     sys.exit(1 if failed else 0)
 

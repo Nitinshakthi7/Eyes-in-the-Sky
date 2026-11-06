@@ -1,0 +1,376 @@
+<!doctype html><html><head><meta charset='utf-8'><title>Group 5 Report</title><style>
+@page { size: A4; margin: 18mm 16mm; }
+body { font-family: Georgia, 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.45; color:#111; }
+h1 { font-size: 19pt; color:#1b3a5c; }
+h2 { font-size: 13pt; color:#1b3a5c; border-bottom:1px solid #9bb; margin-top:16px; font-family: Arial, sans-serif; }
+h3 { font-size: 11pt; color:#1b3a5c; }
+p { margin: 5px 0 7px; text-align: justify; }
+table { border-collapse: collapse; width:100%; margin:6px 0 10px; font-size:9pt; font-family: Arial, sans-serif; }
+th, td { border:1px solid #aaa; padding:3px 5px; vertical-align:top; text-align:left; }
+th { background:#e6edf4; }
+tr { page-break-inside: avoid; }
+img { width: 88%; display:block; margin: 6px auto 2px; page-break-inside: avoid; }
+pre { background:#f5f5f5; border:1px solid #ccc; padding:6px; font-size:8pt; white-space:pre-wrap; }
+code { font-family: Consolas, monospace; font-size:8.8pt; }
+pre code { font-size:8pt; }
+.cover { text-align:center; padding-top:60px; page-break-after: always; }
+.cover h1.title { font-size:24pt; border:none; margin:18px 0 6px; }
+.cover .uni { font-family: Arial, sans-serif; color:#444; margin:4px; }
+.cover .sub { font-style: italic; color:#333; }
+.cover table.cover-table { width: 80%; margin: 30px auto 20px; font-family: Arial, sans-serif; }
+.cover .repo, .cover .date { font-family: Arial, sans-serif; margin-top:14px; }
+.pagebreak { page-break-after: always; }
+figure, p:has(img) { page-break-inside: avoid; }
+</style></head><body><div class="cover">
+<p class="uni">Atria University · Neural Network and Convolutional Neural Network Sprint</p>
+<p class="uni">Capstone Project · Group 5</p>
+<h1 class="title">Eyes in the Sky: Land-Use Classification from Satellite Images</h1>
+<p class="sub">CNN-based classification of Sentinel-2 satellite patches, with a data-efficiency study</p>
+
+<table class="cover-table">
+<tr><th>No.</th><th>Member</th><th>GitHub</th><th>Role</th></tr>
+<tr><td>1</td><td>Tejash</td><td>TejashRajuKV</td><td>Member (Part B)</td></tr>
+<tr><td>2</td><td>Srivalli</td><td>Srivalli-DT</td><td>Member (Part A)</td></tr>
+<tr><td>3</td><td>Rachana</td><td>rachana26paw</td><td>Member (Part C)</td></tr>
+<tr><td>4</td><td><b>Nitin (Team Leader)</b></td><td>Nitinshakthi7</td><td><b>Team Leader</b> (Part D)</td></tr>
+<tr><td>5</td><td>Rohan</td><td>rohans-oss</td><td>Member (Part E)</td></tr>
+</table>
+
+<p class="repo"><b>Public repository:</b> <a href="https://github.com/Nitinshakthi7/Eyes-in-the-Sky">https://github.com/Nitinshakthi7/Eyes-in-the-Sky</a></p>
+<p class="date">Submitted 6 November 2026</p>
+</div>
+
+<h2>Abstract</h2>
+<p>We built and compared convolutional neural networks (CNNs) for land-use classification on EuroSAT RGB: 27,000 Sentinel-2 patches of 64 × 64 pixels in 10 classes. All experiments use one fixed, stratified 70/15/15 split. Our own three-block CNN (94,986 parameters) reaches 92.72% test accuracy, averaged over three seeds. Transfer learning does better: a fully fine-tuned MobileNetV2 reaches 98.27% and ResNet-18 reaches 97.98%, while frozen pretrained backbones reach about 87%. A data-efficiency study shows the advantage of pretraining grows as labels shrink. With 5% of the training images, MobileNetV2 reaches 93.69% against 77.07% for our CNN. Error analysis shows that most mistakes fall among the agricultural classes, which are visually similar. Grad-CAM heat maps are coarse at this resolution, and a hiding control did not separate the highlighted regions from the rest, so we treat them as illustrations rather than proof. The models only know these 10 classes, and their accuracy drops sharply on images at other scales, so they should not be used beyond the EuroSAT setting.</p>
+<div class="pagebreak"></div>
+
+<h2>1. Introduction and Motivation</h2>
+<p>Satellite imagery supports urban planning, deforestation monitoring, crop mapping, flood assessment and the study of city growth. Labelling land use by hand across large areas is not practical, so automatic classification with CNNs is a core tool in remote sensing. The question we study is not only whether a CNN can do this task, but how much labelled data it needs, whether a network designed by us can compete with a pretrained one, and what its mistakes and explanations tell us.</p>
+<p>Our problem: classify 64 × 64 RGB patches into 10 land-use / land-cover classes. We compare a scratch CNN with transfer learning, run ablations on the scratch CNN, study accuracy as the training set shrinks from 100% to 5%, and analyse errors with a confusion matrix, Grad-CAM and t-SNE.</p>
+<h2>2. Related Work</h2>
+<ul>
+<li><strong>EuroSAT (Helber et al., 2019).</strong> Introduced the dataset we use: Sentinel-2 patches labelled into 10 classes, with a benchmark of several CNNs. It sets the common reference for this task.</li>
+<li><strong>ResNet (He et al., 2016).</strong> Residual (skip) connections let very deep networks train well. We use ResNet-18, pretrained on ImageNet, as one transfer model.</li>
+<li><strong>MobileNetV2 (Sandler et al., 2018).</strong> Uses inverted residual blocks and depthwise separable convolutions to get good accuracy with few parameters. We use it as our second transfer model; it is our best model.</li>
+<li><strong>Grad-CAM (Selvaraju et al., 2017).</strong> Shows which image regions push a CNN's prediction, using gradients of the class score with respect to the last convolutional feature maps. We implemented it by hand.</li>
+<li><strong>t-SNE (van der Maaten and Hinton, 2008).</strong> Projects high-dimensional features to 2-D so that similar points stay close. We use it to check whether the learned features group by class.</li>
+</ul>
+<h2>3. Dataset</h2>
+<p><strong>Source and content.</strong> We use the RGB version of EuroSAT: 27,000 labelled 64 × 64 JPEG patches from Sentinel-2 at about 10 metres per pixel, in 10 classes: AnnualCrop, Forest, HerbaceousVegetation, Highway, Industrial, Pasture, PermanentCrop, Residential, River and SeaLake. The data is public and contains no people or personal information.</p>
+<p><strong>Split.</strong> <code>make_split(seed=42)</code> applies scikit-learn's <code>train_test_split</code> with <code>stratify</code> twice: 70% train, then the remaining 30% split 50/50 into validation and test. The result is saved as <code>data/splits.csv</code>, which is committed to git, so every member uses exactly the same images. The class counts below are from the split file.</p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th style="text-align: right;">Total</th>
+<th style="text-align: right;">Train</th>
+<th style="text-align: right;">Validation</th>
+<th style="text-align: right;">Test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AnnualCrop</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>Forest</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>HerbaceousVegetation</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>Highway</td>
+<td style="text-align: right;">2,500</td>
+<td style="text-align: right;">1,750</td>
+<td style="text-align: right;">375</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>Industrial</td>
+<td style="text-align: right;">2,500</td>
+<td style="text-align: right;">1,750</td>
+<td style="text-align: right;">375</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>Pasture</td>
+<td style="text-align: right;">2,000</td>
+<td style="text-align: right;">1,400</td>
+<td style="text-align: right;">300</td>
+<td style="text-align: right;">300</td>
+</tr>
+<tr>
+<td>PermanentCrop</td>
+<td style="text-align: right;">2,500</td>
+<td style="text-align: right;">1,750</td>
+<td style="text-align: right;">375</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>Residential</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td>River</td>
+<td style="text-align: right;">2,500</td>
+<td style="text-align: right;">1,750</td>
+<td style="text-align: right;">375</td>
+<td style="text-align: right;">375</td>
+</tr>
+<tr>
+<td>SeaLake</td>
+<td style="text-align: right;">3,000</td>
+<td style="text-align: right;">2,100</td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">450</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td style="text-align: right;"><strong>27,000</strong></td>
+<td style="text-align: right;"><strong>18,900</strong></td>
+<td style="text-align: right;"><strong>4,050</strong></td>
+<td style="text-align: right;"><strong>4,050</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Exploratory analysis and leakage checks.</strong> The EDA notebook (<code>notebooks/01_eda.ipynb</code>) shows the class counts, one sample grid per class, per-class mean colour and per-channel histograms (Figure 1). Classes are balanced to within a factor of 1.5 (2,000 to 3,000 images), so accuracy and macro-F1 do not differ much. Before training, we check that no file path appears in two splits and that each split keeps the class shares. We also compare MD5 file hashes to catch identical images saved under different names.</p>
+<p><img alt="Figure 1: Class counts in EuroSAT (from notebook 01)." src="file:///C:/Users/Nitinshakthi/Desktop/3rd%20year%20DT/CNN%20and%20Deep%20Learning/eyes-in-the-sky/Backend/results/figures/eda_class_counts.png" /></p>
+<p><strong>Preprocessing and augmentation.</strong> Every model receives pixels scaled to 0–1 and normalised with the ImageNet mean (0.485, 0.456, 0.406) and standard deviation (0.229, 0.224, 0.225). For training images only, we apply random rotations of 90, 180 or 270 degrees and horizontal or vertical flips. A satellite tile has no "up" direction, so these changes keep the label. Validation and test images are never augmented.</p>
+<p><strong>Caveat.</strong> The split is random over patches. Neighbouring patches from the same area can therefore fall in both training and test sets, so the error on completely new regions may be higher than our 1.7%.</p>
+<h2>4. Methodology</h2>
+<p><strong>Scratch CNN.</strong> The baseline has three blocks. Each block is a 3 × 3 convolution, batch normalisation, ReLU and 2 × 2 max pooling, with 32, 64 and 128 filters. Global average pooling reduces each map to one number, and a linear layer gives 10 class scores.</p>
+<pre><code class="language-text">RGB input (3 × 64 × 64)
+  → Conv 3×3 (32)  → BatchNorm → ReLU → MaxPool 2×2   (32 × 32 × 32)
+  → Conv 3×3 (64)  → BatchNorm → ReLU → MaxPool 2×2   (64 × 16 × 16)
+  → Conv 3×3 (128) → BatchNorm → ReLU → MaxPool 2×2   (128 × 8 × 8)
+  → Global average pool                                (128)
+  → Linear (128 → 10)                                   → class scores
+Total parameters: 94,986
+</code></pre>
+<p>We chose three blocks because the spatial size shrinks 64 → 32 → 16 → 8, enough to capture local texture and a wider context without overfitting a 19k-image training set. Batch normalisation stabilises training. Global average pooling replaces a large dense layer, which keeps the parameter count low.</p>
+<p><strong>Ablations.</strong> Each ablation changes one design choice, so its effect can be read directly:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Change from baseline</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Baseline</td>
+<td>3 blocks, BatchNorm on</td>
+</tr>
+<tr>
+<td>No BatchNorm</td>
+<td>BatchNorm removed from all blocks</td>
+</tr>
+<tr>
+<td>Two blocks</td>
+<td>Third block removed (32 and 64 filters only)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Transfer models.</strong> ResNet-18 and MobileNetV2 start from ImageNet weights. We replace the final classifier with a new 10-way layer (<code>model.fc</code> for ResNet-18, <code>model.classifier[1]</code> for MobileNetV2). In <strong>frozen</strong> mode only the new layer trains (learning rate 0.001). In <strong>full fine-tuning</strong> all weights train (learning rate 0.0001, lower so the pretrained features are not destroyed).</p>
+<p><strong>Training recipe (same for every model).</strong> Adam optimiser, cross-entropy loss, batch size 64, at most 20 epochs. The epoch with the best validation accuracy is kept. The test set is scored once per finished run and never used to make any decision. Each setting runs with seeds 0, 1 and 2, and we report the mean and sample standard deviation (ddof = 1).</p>
+<h2>5. Experiments and Results</h2>
+<p><strong>Main comparison.</strong> Test set, 4,050 images, models trained on all 18,900 training images, mean ± sample standard deviation over three seeds (<code>results/metrics.csv</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th style="text-align: right;">Test accuracy</th>
+<th style="text-align: right;">Test macro-F1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scratch CNN baseline</td>
+<td style="text-align: right;">92.72% ± 0.45%</td>
+<td style="text-align: right;">92.48% ± 0.51%</td>
+</tr>
+<tr>
+<td>Scratch CNN, no BatchNorm</td>
+<td style="text-align: right;">88.95% ± 0.63%</td>
+<td style="text-align: right;">88.45% ± 0.64%</td>
+</tr>
+<tr>
+<td>Scratch CNN, two blocks</td>
+<td style="text-align: right;">85.31% ± 1.43%</td>
+<td style="text-align: right;">84.18% ± 1.78%</td>
+</tr>
+<tr>
+<td>ResNet-18, frozen</td>
+<td style="text-align: right;">86.85% ± 0.32%</td>
+<td style="text-align: right;">86.35% ± 0.25%</td>
+</tr>
+<tr>
+<td>MobileNetV2, frozen</td>
+<td style="text-align: right;">87.70% ± 0.29%</td>
+<td style="text-align: right;">87.27% ± 0.31%</td>
+</tr>
+<tr>
+<td>ResNet-18, full fine-tuning</td>
+<td style="text-align: right;">97.98% ± 0.14%</td>
+<td style="text-align: right;">97.91% ± 0.14%</td>
+</tr>
+<tr>
+<td><strong>MobileNetV2, full fine-tuning</strong></td>
+<td style="text-align: right;"><strong>98.27% ± 0.12%</strong></td>
+<td style="text-align: right;"><strong>98.19% ± 0.13%</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Ablations.</strong> Removing BatchNorm costs 3.8 points of accuracy and 4.0 points of macro-F1. The two-block model costs 7.4 points of accuracy and has the largest seed spread (± 1.43). Both drops are larger than the seed-to-seed spread of the baseline (± 0.45), so the components do matter for this setup. Because we only have three seeds, these are evidence, not proof.</p>
+<p><img alt="Figure 2: Learning curves of the scratch CNN baseline (seed 0)." src="file:///C:/Users/Nitinshakthi/Desktop/3rd%20year%20DT/CNN%20and%20Deep%20Learning/eyes-in-the-sky/Backend/results/figures/scratch_cnn_learning_curves.png" /></p>
+<p>The learning curves (Figure 2) show training and validation accuracy both rising over 20 epochs and ending close together. We see no large widening gap, so overfitting is limited. Validation accuracy moves up and down between epochs, which is why the best-validation epoch is chosen rather than the last one.</p>
+<p><strong>Transfer learning.</strong> Full fine-tuning beats frozen backbones by about 10 points for both models. The two modes also use different learning rates, so this comparison mixes two changes. We keep it because the team used the same recipe for every model, and the caveat is stated here. Both pretrained models beat the scratch CNN by 5 to 6 points; the gap between ResNet-18 and MobileNetV2 (0.3 points) is too small to call.</p>
+<p><img alt="Figure 3: Transfer models against the scratch CNN, same split." src="file:///C:/Users/Nitinshakthi/Desktop/3rd%20year%20DT/CNN%20and%20Deep%20Learning/eyes-in-the-sky/Backend/results/figures/transfer_vs_scratch_comparison.png" /></p>
+<p><strong>Data efficiency.</strong> We trained the scratch CNN and MobileNetV2 (full fine-tuning) on 5%, 10%, 25%, 50% and 100% of the training images. The validation and test sets stay the same. Results are mean ± sample standard deviation over seeds 0, 1 and 2, except where noted in the table.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">Training images</th>
+<th style="text-align: right;">Scratch CNN</th>
+<th style="text-align: right;">MobileNetV2 fine-tuned</th>
+<th style="text-align: right;">Gap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">945 (5%)</td>
+<td style="text-align: right;">77.07% ± 0.74%</td>
+<td style="text-align: right;">93.69% ± 0.20%</td>
+<td style="text-align: right;">16.6</td>
+</tr>
+<tr>
+<td style="text-align: right;">1,890 (10%)</td>
+<td style="text-align: right;">80.98% ± 1.20%</td>
+<td style="text-align: right;">96.15% ± 0.33%</td>
+<td style="text-align: right;">15.2</td>
+</tr>
+<tr>
+<td style="text-align: right;">4,725 (25%)</td>
+<td style="text-align: right;">84.96% ± 1.86%</td>
+<td style="text-align: right;">97.26% ± 0.09%</td>
+<td style="text-align: right;">12.3</td>
+</tr>
+<tr>
+<td style="text-align: right;">9,450 (50%)</td>
+<td style="text-align: right;">89.45% ± 1.20%</td>
+<td style="text-align: right;">97.76% ± 0.01%</td>
+<td style="text-align: right;">8.3</td>
+</tr>
+<tr>
+<td style="text-align: right;">18,900 (100%)</td>
+<td style="text-align: right;">92.72% ± 0.45%</td>
+<td style="text-align: right;">98.27% ± 0.12%</td>
+<td style="text-align: right;">5.6</td>
+</tr>
+</tbody>
+</table>
+<p><img alt="Figure 4: Test accuracy against the number of training images (log x-axis, mean ± standard deviation)." src="file:///C:/Users/Nitinshakthi/Desktop/3rd%20year%20DT/CNN%20and%20Deep%20Learning/eyes-in-the-sky/Backend/results/figures/data_efficiency.png" /></p>
+<p>The pretrained model with 945 labels is already better than our CNN with all 18,900. The gap shrinks as data grows but never closes: pretraining mainly helps when labels are scarce. Rohan's extra seed-4 runs of the scratch CNN at 5%, 10% and 25% are in <code>metrics.csv</code> and are not averaged into the table above.</p>
+<h2>6. Error Analysis and Explainability</h2>
+<p><strong>Confusion matrix.</strong> The best model (MobileNetV2, seed 0, evaluated on the CPU) gets 3,981 of 4,050 test images right, 98.3%, with 69 mistakes. The GPU run of the same weights gives 3,980 (98.27%), which is the value in the table above. Most classes are almost perfect: SeaLake 450/450, Forest 449/450, Residential 448/450.</p>
+<p><img alt="Figure 5: Confusion matrix of the best model on the test set." src="file:///C:/Users/Nitinshakthi/Desktop/3rd%20year%20DT/CNN%20and%20Deep%20Learning/eyes-in-the-sky/Backend/results/figures/mobilenet_v2_full_frac1_seed0_confusion_matrix.png" /></p>
+<p><strong>Where the mistakes are.</strong> 36 of the 69 mistakes (52%) are among AnnualCrop, PermanentCrop, Pasture and HerbaceousVegetation. The largest single confusion is 7 AnnualCrop tiles predicted as PermanentCrop. Other frequent pairs are AnnualCrop → Pasture (5), HerbaceousVegetation → Pasture (5), HerbaceousVegetation → PermanentCrop (5) and Highway → River (4). Visually, these classes share green fields and similar textures, and Highway and River both contain long, narrow structures. We looked at examples, but we did not test the cause directly. PermanentCrop has the lowest recall of any class (360 of 375, 0.960).</p>
+<p><strong>Grad-CAM.</strong> Grad-CAM weights the last convolutional feature maps by the average gradient of the predicted class score, sums them, and keeps the positive part (ReLU) as a heat map. We wrote it by hand with a forward hook (to keep the activations) and a backward hook (to keep the gradients). Because MobileNetV2's last block is only 2 × 2 cells on a 64 × 64 tile, the maps are coarse. The figure shows one correct and one wrong example per class; the selection is done by the script in notebook 04, not by hand.</p>
+<p><img alt="Figure 6: Grad-CAM for the best model: examples for each class." src="file:///C:/Users/Nitinshakthi/Desktop/3rd%20year%20DT/CNN%20and%20Deep%20Learning/eyes-in-the-sky/Backend/results/figures/gradcam_all_classes.png" /></p>
+<p><strong>Does Grad-CAM show what matters?</strong> We tested it with a control. On 200 images, hiding the hottest 25% of each tile reduced confidence by 0.064 on average. Hiding the coldest 25% reduced it by 0.061. The two are almost the same, so in this experiment the heat map did not identify the pixels the model depends on. The hottest quarter was in the bottom-right corner in 80% of images, which suggests a positional bias in the explanation method at this resolution. We therefore present Grad-CAM as a visual aid, not as proof of what the model uses.</p>
+<p><strong>t-SNE.</strong> We took the MobileNetV2 features just before the final layer for about 2,000 random test images (fixed seed, perplexity 30) and plotted them coloured by class (Figure 7). Classes that the confusion matrix rarely mixes form separate groups, while the agricultural classes overlap, which matches Section 6. t-SNE distances between groups are not measurements, and the plot does not show how the model reaches a decision.</p>
+<p><img alt="Figure 7: t-SNE of MobileNetV2 features on test images, coloured by class." src="file:///C:/Users/Nitinshakthi/Desktop/3rd%20year%20DT/CNN%20and%20Deep%20Learning/eyes-in-the-sky/Backend/results/figures/mobilenet_v2_tsne.png" /></p>
+<h2>7. Limitations, Ethics and Future Work</h2>
+<p><strong>Only EuroSAT-style tiles.</strong> The models learned from 64 × 64 Sentinel-2 tiles covering about 640 m. In a check, when the tile showed half that width (about 320 m), MobileNetV2's accuracy fell from 98% to about 36%, and to about 13% at a quarter of the width. Part of that drop comes from blurring when the crop is enlarged, but it shows the models depend strongly on scale.</p>
+<p><strong>Always one of 10 classes.</strong> There is no "none of these" output. A plain red square was called SeaLake with 100% confidence by both the MobileNetV2 and ResNet-18 models. Mistakes also come with fairly high confidence (76% on average), so confidence does not warn the user reliably.</p>
+<p><strong>Random split.</strong> As noted in Section 3, neighbouring patches can be in both training and test sets, so accuracy on new regions may be lower.</p>
+<p><strong>Confounded comparison.</strong> Frozen and fully fine-tuned models differ in learning rate as well as in which weights train. BatchNorm statistics also keep updating in the "frozen" models.</p>
+<p><strong>Small numbers.</strong> Three seeds per setting, and 69 test mistakes: a difference of four against five mistakes is noise.</p>
+<p><strong>Ethics.</strong> EuroSAT is a public, anonymised dataset of land-cover tiles. It contains no people or personal information. The models must not be used as a basis for decisions about individual land or people without expert review. Our demo website is a teaching tool and is not a general satellite-image reader.</p>
+<p><strong>Future work.</strong> Test the models on other regions and seasons (a geographic hold-out split). Use the 13-band multispectral version of EuroSAT. Add a "none of these" or out-of-distribution check. Use UMAP alongside t-SNE. Repeat the data-efficiency study with more seeds at the smallest sizes.</p>
+<h2>8. Conclusion</h2>
+<p>A CNN designed by us reaches 92.7% on EuroSAT, and each design choice we tested (BatchNorm, depth) matters by several points. Transfer learning reaches 98.3%, and the gain is largest when labels are scarce: with 5% of the labels, a pretrained MobileNetV2 is already better than our CNN with all of them. Errors concentrate in visually similar agricultural classes. Grad-CAM and t-SNE help us see the model's behaviour, but our control shows that Grad-CAM heat maps must be read with care. The main limit is the scope: the models only work well on the kind of tile they were trained on.</p>
+<h2>9. Use of AI Tools</h2>
+<p>We used AI assistants in this project and disclose it here as the brief requires. Claude Code (Nitin) generated the repository skeleton and the laptop check script, wrote the shared training function <code>train()</code> and the data-efficiency notebook, built the website server in <code>app/server.py</code>, and reviewed teammates' pull requests. Tejash used Codex to implement the scratch CNN and its ablations. Rachana used ChatGPT and Gemini for setup help and for explaining transfer-learning concepts. Srivalli used Claude Code to write the data code and report drafts, and Copilot for the part-A viva answers. Rohan used ChatGPT for the evaluation, Grad-CAM and t-SNE work. We checked AI output by running the code, reading every line, comparing outputs with the saved results, and re-scoring the checkpoints (for example, Tejash's nine checkpoints were reloaded and re-scored and matched his rows exactly). Every member can explain the code in their part. The full log, with one row per use and what was checked, is in <code>Backend/docs/ai_usage.md</code>.</p>
+<h2>10. Contribution Table</h2>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>GitHub</th>
+<th>Responsibilities</th>
+<th>Key files and experiments</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Nitin</strong> (team leader)</td>
+<td>Nitinshakthi7</td>
+<td><strong>Part D.</strong> Repository, team plan, shared <code>train()</code>, data-efficiency study (24 runs), Grad-CAM control, website server, pull-request review, this report's assembly</td>
+<td><code>src/utils.py</code>, <code>src/train.py</code>, <code>notebooks/05_data_efficiency.ipynb</code>, <code>check_setup.py</code>, <code>app/server.py</code>, <code>src/gradcam_sanity_check.py</code></td>
+</tr>
+<tr>
+<td><strong>Srivalli</strong></td>
+<td>Srivalli-DT</td>
+<td><strong>Part A.</strong> Data loading, fixed stratified split, leakage checks, augmentation, EDA</td>
+<td><code>src/dataset.py</code>, <code>data/splits.csv</code>, <code>notebooks/01_eda.ipynb</code></td>
+</tr>
+<tr>
+<td><strong>Tejash</strong></td>
+<td>TejashRajuKV</td>
+<td><strong>Part B.</strong> Scratch CNN, ablations (BatchNorm, depth), learning curves, website pages</td>
+<td><code>src/models.py</code> (scratch CNN), <code>notebooks/02_baseline_cnn.ipynb</code>, <code>frontend/</code></td>
+</tr>
+<tr>
+<td><strong>Rachana</strong></td>
+<td>rachana26paw</td>
+<td><strong>Part C.</strong> Transfer models (ResNet-18, MobileNetV2; frozen and full), transfer comparison</td>
+<td><code>src/models.py</code> (transfer models), <code>notebooks/03_transfer_learning.ipynb</code></td>
+</tr>
+<tr>
+<td><strong>Rohan</strong></td>
+<td>rohans-oss</td>
+<td><strong>Part E.</strong> Evaluation, confusion matrix, Grad-CAM, Grad-CAM control, t-SNE, seed-4 runs</td>
+<td><code>src/evaluate.py</code>, <code>src/gradcam.py</code>, <code>src/visualize_*.py</code>, <code>notebooks/04_evaluation_and_explainability.ipynb</code></td>
+</tr>
+</tbody>
+</table>
+<p>Every member's work is in the repository history through pull requests.</p>
+<h2>11. References</h2>
+<ol>
+<li>Helber, P., Bischke, B., Dengel, A., Borth, D. (2019). EuroSAT: A Novel Dataset and Deep Learning Benchmark for Land Use and Land Cover Classification. <em>IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing</em>, 12(7), 2217–2226.</li>
+<li>He, K., Zhang, X., Ren, S., Sun, J. (2016). Deep Residual Learning for Image Recognition. <em>CVPR</em>, 770–778.</li>
+<li>Sandler, M., Howard, A., Zhu, M., Zhmoginov, A., Chen, L.-C. (2018). MobileNetV2: Inverted Residuals and Linear Bottlenecks. <em>CVPR</em>, 4510–4520.</li>
+<li>Selvaraju, R. R., et al. (2017). Grad-CAM: Visual Explanations from Deep Networks via Gradient-Based Localization. <em>ICCV</em>, 618–626.</li>
+<li>van der Maaten, L., Hinton, G. (2008). Visualizing Data using t-SNE. <em>Journal of Machine Learning Research</em>, 9, 2579–2605.</li>
+<li>Sentinel-2 mission, European Space Agency (Copernicus programme).</li>
+<li>PyTorch and torchvision (models and pretrained ImageNet weights); scikit-learn (splits, metrics, t-SNE).</li>
+</ol>
+<div class="pagebreak"></div>
+
+<h2>Appendix A: Reproducing the results</h2>
+<p>Full steps are in the repository README. In short (inside the <code>Backend/</code> folder, with the virtual environment on):</p>
+<pre><code class="language-bash">python check_setup.py --name YourName --download   # checks the laptop; downloads data and weights
+python -m src.utils                                 # seed and device check
+python -c &quot;from src.train import train; train('mobilenet_v2_full', 1.0, 0)&quot;
+python -m src.evaluate --model mobilenet_v2_full    # confusion matrix and mistakes
+python -m app.server                                # the website, at http://127.0.0.1:8000/
+</code></pre>
+<p>Every run appends one row to <code>results/metrics.csv</code>. Fixed seeds, the fixed split in <code>data/splits.csv</code>, and the library versions in <code>requirements.txt</code> make the results repeatable. Trained weights are not in git because of their size; they are shared as a download link in <code>Backend/models/README.md</code>.</p>
+<h2>Appendix B: Repository layout</h2>
+<p><code>README.md</code> (overview, setup, results, contribution table) · <code>Backend/src/</code> (data, models, training, evaluation, Grad-CAM) · <code>Backend/notebooks/</code> (01 EDA, 02 scratch CNN, 03 transfer learning, 04 evaluation and explainability, 05 data efficiency) · <code>Backend/results/</code> (metrics and figures) · <code>Backend/app/</code> (website server) · <code>Backend/docs/</code> (plan, member logs, viva notes, AI usage) · <code>frontend/</code> (website pages).</p></body></html>
